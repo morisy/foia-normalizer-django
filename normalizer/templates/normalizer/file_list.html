@@ -1,0 +1,108 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}All Files{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3>All Uploaded Files</h3>
+                <a href="{% url 'home' %}" class="btn btn-primary">Upload New File</a>
+            </div>
+            <div class="card-body">
+                {% if uploads %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th>Status</th>
+                                    <th>Mode</th>
+                                    <th>Uploaded</th>
+                                    <th>Size</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for upload in uploads %}
+                                <tr>
+                                    <td>
+                                        <a href="{% url 'file_detail' upload.id %}" class="text-decoration-none">
+                                            {{ upload.filename }}
+                                        </a>
+                                    </td>
+                                    <td>
+                                        {% if upload.processed %}
+                                            <span class="badge bg-success">Processed</span>
+                                        {% else %}
+                                            <span class="badge bg-warning">Pending</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-info">{{ upload.processing_mode|title }}</span>
+                                    </td>
+                                    <td>
+                                        {{ upload.uploaded_at|date:"M d, Y H:i" }}
+                                        {% if upload.uploaded_by %}
+                                            <br><small class="text-muted">by {{ upload.uploaded_by.username }}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ upload.file.size|filesizeformat }}</td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            <a href="{% url 'file_detail' upload.id %}" class="btn btn-outline-primary">View</a>
+                                            {% if upload.processed and upload.output_file %}
+                                                <a href="{% url 'download_file' upload.id %}" class="btn btn-outline-success">Download</a>
+                                            {% else %}
+                                                <a href="{% url 'manual_review' upload.id %}" class="btn btn-outline-warning">Process</a>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    {% if uploads.has_other_pages %}
+                        <nav aria-label="File pagination">
+                            <ul class="pagination justify-content-center">
+                                {% if uploads.has_previous %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ uploads.previous_page_number }}">Previous</a>
+                                    </li>
+                                {% endif %}
+                                
+                                {% for page_num in uploads.paginator.page_range %}
+                                    {% if page_num == uploads.number %}
+                                        <li class="page-item active">
+                                            <span class="page-link">{{ page_num }}</span>
+                                        </li>
+                                    {% elif page_num > uploads.number|add:'-3' and page_num < uploads.number|add:'3' %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?page={{ page_num }}">{{ page_num }}</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                {% if uploads.has_next %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ uploads.next_page_number }}">Next</a>
+                                    </li>
+                                {% endif %}
+                            </ul>
+                        </nav>
+                    {% endif %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <h5 class="text-muted">No files uploaded yet</h5>
+                        <p class="text-muted">Upload your first FOIA log to get started.</p>
+                        <a href="{% url 'home' %}" class="btn btn-primary">Upload File</a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

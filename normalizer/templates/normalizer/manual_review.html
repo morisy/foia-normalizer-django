@@ -1,0 +1,244 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}Manual Review - {{ upload.filename }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3>Manual Review: {{ upload.filename }}</h3>
+                <div>
+                    <a href="{% url 'file_detail' upload.id %}" class="btn btn-secondary">View Details</a>
+                </div>
+            </div>
+            <div class="card-body">
+                <form method="post" id="review-form">
+                    {% csrf_token %}
+                    
+                    {% if preview_data %}
+                    <div class="mb-4">
+                        <h5>File Analysis</h5>
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h6 class="card-title">Total Rows</h6>
+                                        <h4 class="text-primary">{{ preview_data.statistics.total_rows }}</h4>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h6 class="card-title">Columns</h6>
+                                        <h4 class="text-info">{{ preview_data.statistics.total_columns }}</h4>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h6 class="card-title">Mapped</h6>
+                                        <h4 class="text-success">{{ preview_data.statistics.mapped_columns }}</h4>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h6 class="card-title">Empty Rows</h6>
+                                        <h4 class="text-warning">{{ preview_data.statistics.empty_rows }}</h4>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <h5>Data Preview</h5>
+                        <p class="text-muted">Sample of your data showing original columns and their mapped equivalents:</p>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Row</th>
+                                        {% for col_info in preview_data.column_mappings %}
+                                            <th>
+                                                <div class="small">
+                                                    <strong>{{ col_info.original }}</strong>
+                                                    {% if col_info.is_mapped %}
+                                                        <br><span class="text-success">→ {{ col_info.mapped }}</span>
+                                                    {% endif %}
+                                                </div>
+                                            </th>
+                                        {% endfor %}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in preview_data.sample_data %}
+                                        <tr>
+                                            <td><strong>{{ row.row_number }}</strong></td>
+                                            {% for col_info in preview_data.column_mappings %}
+                                                <td class="small">
+                                                    {% for col_name, col_data in row.data.items %}
+                                                        {% if col_name == col_info.original %}
+                                                            {{ col_data.original }}
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                </td>
+                                            {% endfor %}
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    {% if column_mappings %}
+                    <div class="mb-4">
+                        <h5>Column Mappings</h5>
+                        <p class="text-muted">Review and adjust the column mappings below. Green indicates high confidence, yellow medium, red low.</p>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Original Column</th>
+                                        <th>Mapped To</th>
+                                        <th>Confidence</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for mapping in column_mappings %}
+                                    <tr>
+                                        <td><code>{{ mapping.original_column }}</code></td>
+                                        <td>
+                                            <select name="column_{{ mapping.original_column|slugify }}" class="form-select form-select-sm">
+                                                <option value="">-- Do not map --</option>
+                                                {% for col in sflf_columns %}
+                                                    <option value="{{ col }}" 
+                                                        {% if mapping.mapped_column == col %}selected{% endif %}>
+                                                        {{ col }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                        </td>
+                                        <td>
+                                            {% if mapping.confidence %}
+                                                {% if mapping.confidence >= 0.8 %}
+                                                    <span class="badge bg-success">{{ mapping.confidence|floatformat:1 }}</span>
+                                                {% elif mapping.confidence >= 0.5 %}
+                                                    <span class="badge bg-warning">{{ mapping.confidence|floatformat:1 }}</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">{{ mapping.confidence|floatformat:1 }}</span>
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="badge bg-secondary">Manual</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if mapping.user_confirmed %}
+                                                <span class="badge bg-success">Confirmed</span>
+                                            {% else %}
+                                                <span class="badge bg-warning">Needs Review</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    {% if status_mappings %}
+                    <div class="mb-4">
+                        <h5>Status Mappings</h5>
+                        <p class="text-muted">Review and adjust the status value mappings below.</p>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Original Status</th>
+                                        <th>Mapped To</th>
+                                        <th>Confidence</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for mapping in status_mappings %}
+                                    <tr>
+                                        <td><code>{{ mapping.original_status }}</code></td>
+                                        <td>
+                                            <select name="status_{{ mapping.original_status|slugify }}" class="form-select form-select-sm">
+                                                <option value="">-- Do not map --</option>
+                                                {% for status in sflf_statuses %}
+                                                    <option value="{{ status }}" 
+                                                        {% if mapping.mapped_status == status %}selected{% endif %}>
+                                                        {% if status %}{{ status }}{% else %}(empty){% endif %}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                        </td>
+                                        <td>
+                                            {% if mapping.confidence %}
+                                                {% if mapping.confidence >= 0.8 %}
+                                                    <span class="badge bg-success">{{ mapping.confidence|floatformat:1 }}</span>
+                                                {% elif mapping.confidence >= 0.5 %}
+                                                    <span class="badge bg-warning">{{ mapping.confidence|floatformat:1 }}</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">{{ mapping.confidence|floatformat:1 }}</span>
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="badge bg-secondary">Manual</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if mapping.user_confirmed %}
+                                                <span class="badge bg-success">Confirmed</span>
+                                            {% else %}
+                                                <span class="badge bg-warning">Needs Review</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'home' %}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary" id="process-btn">
+                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                            Process File
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block javascript %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('review-form');
+    const processBtn = document.getElementById('process-btn');
+    const spinner = processBtn.querySelector('.spinner-border');
+    
+    form.addEventListener('submit', function(e) {
+        processBtn.disabled = true;
+        spinner.classList.remove('d-none');
+        processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Processing...';
+    });
+});
+</script>
+{% endblock %}
