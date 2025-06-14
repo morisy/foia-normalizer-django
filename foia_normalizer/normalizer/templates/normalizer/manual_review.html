@@ -168,7 +168,6 @@
                                     <div class="form-check">
                                         <input class="form-check-input status-column-checkbox" type="checkbox" 
                                                value="{{ col }}" id="status_col_{{ forloop.counter }}"
-                                               data-values='{{ values|json_script:"" }}'
                                                name="manual_status_columns">
                                         <label class="form-check-label" for="status_col_{{ forloop.counter }}">
                                             <strong>{{ col }}</strong> ({{ values|length }} unique values)
@@ -291,6 +290,9 @@
 {% endblock %}
 
 {% block javascript %}
+{{ potential_status_values|json_script:"potential-status-values" }}
+{{ sflf_statuses|json_script:"sflf-statuses" }}
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('review-form');
@@ -313,22 +315,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const dynamicStatusTableBody = document.getElementById('dynamic-status-table-body');
     
     // Store potential status values
-    const potentialStatusValues = {{ potential_status_values|json_script:"potential-status-values" }};
-    const statusValuesData = JSON.parse(document.getElementById('potential-status-values').textContent);
+    const statusValuesData = JSON.parse(document.getElementById('potential-status-values').textContent || '{}');
     
     // SFLF status options
-    const sflfStatuses = {{ sflf_statuses|json_script:"sflf-statuses" }};
-    const sflfStatusList = JSON.parse(document.getElementById('sflf-statuses').textContent);
+    const sflfStatusList = JSON.parse(document.getElementById('sflf-statuses').textContent || '[]');
     
     // Track selected columns and their order
     let selectedColumns = [];
     
-    // Handle checkbox changes
-    statusCheckboxes.forEach(function(checkbox) {
-        checkbox.addEventListener('change', function() {
-            updateSelectedColumns();
+    // Only initialize if we have status checkboxes (multi-column status feature)
+    if (statusCheckboxes.length > 0 && statusValuesData) {
+        // Handle checkbox changes
+        statusCheckboxes.forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                updateSelectedColumns();
+            });
         });
-    });
+    }
     
     function updateSelectedColumns() {
         selectedColumns = [];
