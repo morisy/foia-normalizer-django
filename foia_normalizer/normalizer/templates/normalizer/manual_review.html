@@ -155,6 +155,28 @@
                     </div>
                     {% endif %}
                     
+                    {% if potential_status_values %}
+                    <div class="mb-4">
+                        <h5>Status Column Selection</h5>
+                        <p class="text-muted">If no status column was automatically detected, select which column contains status values:</p>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Select Status Column:</label>
+                            <select id="status-column-select" name="manual_status_column" class="form-select">
+                                <option value="">-- No status column --</option>
+                                {% for col, values in potential_status_values.items %}
+                                    <option value="{{ col }}">{{ col }} ({{ values|length }} unique values)</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div id="status-values-preview" class="d-none">
+                            <p class="text-muted">Sample status values from selected column:</p>
+                            <div id="status-values-list" class="mb-3"></div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
                     {% if status_mappings %}
                     <div class="mb-4">
                         <h5>Status Mappings</h5>
@@ -213,6 +235,24 @@
                     </div>
                     {% endif %}
                     
+                    <div id="dynamic-status-mappings" class="mb-4 d-none">
+                        <h5>Status Mappings</h5>
+                        <p class="text-muted">Map the status values from your selected column to SFLF standard statuses:</p>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Original Status</th>
+                                        <th>Mapped To</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dynamic-status-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
                     <div class="d-flex justify-content-between">
                         <a href="{% url 'home' %}" class="btn btn-secondary">Cancel</a>
                         <button type="submit" class="btn btn-primary" id="process-btn">
@@ -239,6 +279,95 @@ document.addEventListener('DOMContentLoaded', function() {
         spinner.classList.remove('d-none');
         processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Processing...';
     });
+    
+    // Status column selection handling
+    const statusColumnSelect = document.getElementById('status-column-select');
+    const statusValuesPreview = document.getElementById('status-values-preview');
+    const statusValuesList = document.getElementById('status-values-list');
+    const dynamicStatusMappings = document.getElementById('dynamic-status-mappings');
+    const dynamicStatusTableBody = document.getElementById('dynamic-status-table-body');
+    
+    // Store potential status values
+    const potentialStatusValues = {{ potential_status_values|json_script:"potential-status-values" }};
+    const statusValuesData = JSON.parse(document.getElementById('potential-status-values').textContent);
+    
+    // SFLF status options
+    const sflfStatuses = {{ sflf_statuses|json_script:"sflf-statuses" }};
+    const sflfStatusList = JSON.parse(document.getElementById('sflf-statuses').textContent);
+    
+    if (statusColumnSelect) {
+        statusColumnSelect.addEventListener('change', function() {
+            const selectedColumn = this.value;
+            
+            if (selectedColumn && statusValuesData[selectedColumn]) {
+                // Show preview of status values
+                statusValuesPreview.classList.remove('d-none');
+                const values = statusValuesData[selectedColumn];
+                const sampleValues = values.slice(0, 5);
+                statusValuesList.innerHTML = '<code>' + sampleValues.join('</code>, <code>') + '</code>' + 
+                    (values.length > 5 ? ' ... and ' + (values.length - 5) + ' more' : '');
+                
+                // Show dynamic status mapping table
+                dynamicStatusMappings.classList.remove('d-none');
+                dynamicStatusTableBody.innerHTML = '';
+                
+                // Create mapping rows for each unique status value
+                values.forEach(function(statusValue) {
+                    const row = document.createElement('tr');
+                    const statusCell = document.createElement('td');
+                    statusCell.innerHTML = '<code>' + statusValue + '</code>';
+                    
+                    const mappingCell = document.createElement('td');
+                    const select = document.createElement('select');
+                    select.name = 'dynamic_status_' + statusValue.toString().toLowerCase().replace(/\s+/g, '_');
+                    select.className = 'form-select form-select-sm';
+                    
+                    // Add options
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = '-- Do not map --';
+                    select.appendChild(defaultOption);
+                    
+                    sflfStatusList.forEach(function(status) {
+                        const option = document.createElement('option');
+                        option.value = status;
+                        option.textContent = status || '(empty)';
+                        
+                        // Try to auto-select based on fuzzy matching
+                        const statusLower = statusValue.toString().toLowerCase();
+                        if (status && (
+                            (status === 'done' && (statusLower.includes('complete') || statusLower.includes('closed'))) ||
+                            (status === 'processed' && (statusLower.includes('process') || statusLower.includes('pending'))) ||
+                            (status === 'rejected' && (statusLower.includes('reject') || statusLower.includes('denied'))) ||
+                            (status === 'partial' && statusLower.includes('partial')) ||
+                            (status === 'abandoned' && (statusLower.includes('abandon') || statusLower.includes('withdraw')))
+                        )) {
+                            option.selected = true;
+                        }
+                        
+                        select.appendChild(option);
+                    });
+                    
+                    mappingCell.appendChild(select);
+                    row.appendChild(statusCell);
+                    row.appendChild(mappingCell);
+                    dynamicStatusTableBody.appendChild(row);
+                });
+                
+                // Update the status column mapping in column mappings
+                const columnMappingSelects = document.querySelectorAll('select[name^="column_"]');
+                columnMappingSelects.forEach(function(select) {
+                    if (select.closest('tr').querySelector('code').textContent === selectedColumn) {
+                        select.value = 'status';
+                    }
+                });
+            } else {
+                // Hide preview and dynamic mappings
+                statusValuesPreview.classList.add('d-none');
+                dynamicStatusMappings.classList.add('d-none');
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

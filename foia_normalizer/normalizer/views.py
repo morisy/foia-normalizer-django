@@ -80,6 +80,26 @@ def manual_review(request, upload_id):
     if request.method == 'POST':
         # Process the manual mappings and submit for approval
         try:
+            # Handle manual status column selection
+            manual_status_column = request.POST.get('manual_status_column')
+            if manual_status_column:
+                # Update column mapping to mark this as the status column
+                mapping, created = ColumnMapping.objects.update_or_create(
+                    upload=upload,
+                    original_column=manual_status_column,
+                    defaults={
+                        'mapped_column': 'status',
+                        'confidence': 1.0,
+                        'user_confirmed': True
+                    }
+                )
+                
+                # Process dynamic status mappings
+                normalizer = FOIANormalizer(upload)
+                df = normalizer.load_file()
+                if manual_status_column in df.columns:
+                    normalizer.map_statuses(df, manual_status_column)
+            
             # Update column mappings based on form data
             for key, value in request.POST.items():
                 if key.startswith('column_'):
@@ -103,6 +123,19 @@ def manual_review(request, upload_id):
                         mapping.mapped_status = value
                         mapping.user_confirmed = True
                         mapping.save()
+                
+                elif key.startswith('dynamic_status_'):
+                    # Handle dynamic status mappings from manual selection
+                    original_status = key.replace('dynamic_status_', '').replace('_', ' ')
+                    mapping, created = StatusMapping.objects.update_or_create(
+                        upload=upload,
+                        original_status=original_status,
+                        defaults={
+                            'mapped_status': value,
+                            'confidence': 1.0,
+                            'user_confirmed': True
+                        }
+                    )
             
             # Process the file and set to pending approval
             process_upload(upload)
@@ -150,6 +183,25 @@ def manual_review(request, upload_id):
         except Exception as e:
             messages.warning(request, f'Could not generate preview: {str(e)}')
     
+    # Get all unique status values from potential status columns
+    potential_status_values = {}
+    try:
+        normalizer = FOIANormalizer(upload)
+        df = normalizer.load_file()
+        
+        # Look for columns that might contain status values
+        status_keywords = ['status', 'state', 'disposition', 'outcome', 'result']
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if any(keyword in col_lower for keyword in status_keywords):
+                # Get unique values from this column
+                unique_values = df[col].dropna().unique()
+                if len(unique_values) > 0 and len(unique_values) < 50:  # Reasonable number of statuses
+                    potential_status_values[col] = list(unique_values)
+    except Exception as e:
+        # Continue without status value detection
+        pass
+    
     column_mappings = upload.column_mappings.all()
     status_mappings = upload.status_mappings.all()
     
@@ -173,6 +225,7 @@ def manual_review(request, upload_id):
         'sflf_columns': sflf_columns,
         'sflf_statuses': sflf_statuses,
         'preview_data': preview_data,
+        'potential_status_values': potential_status_values,
     })
 
 
