@@ -1,0 +1,186 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}{{ upload.filename }} - Details{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3>{{ upload.filename }}</h3>
+                <div>
+                    {% if upload.processed and upload.output_file %}
+                        <a href="{% url 'download_file' upload.id %}" class="btn btn-success">
+                            Download Normalized File
+                        </a>
+                    {% endif %}
+                    {% if not upload.processed %}
+                        <a href="{% url 'manual_review' upload.id %}" class="btn btn-primary">
+                            Review & Process
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-3">Status:</dt>
+                    <dd class="col-sm-9">
+                        {% if upload.processed %}
+                            <span class="badge bg-success">Processed</span>
+                        {% else %}
+                            <span class="badge bg-warning">Pending</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-3">Mode:</dt>
+                    <dd class="col-sm-9">
+                        <span class="badge bg-info">{{ upload.processing_mode|title }}</span>
+                    </dd>
+                    
+                    <dt class="col-sm-3">Uploaded:</dt>
+                    <dd class="col-sm-9">{{ upload.uploaded_at }}</dd>
+                    
+                    {% if upload.uploaded_by %}
+                    <dt class="col-sm-3">Uploaded By:</dt>
+                    <dd class="col-sm-9">{{ upload.uploaded_by.username }}</dd>
+                    {% endif %}
+                    
+                    <dt class="col-sm-3">File Size:</dt>
+                    <dd class="col-sm-9">{{ upload.file.size|filesizeformat }}</dd>
+                </dl>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Processing Logs</h5>
+            </div>
+            <div class="card-body processing-log">
+                {% if logs %}
+                    {% for log in logs %}
+                        <div class="mb-2 p-2 border-start border-3 
+                            {% if log.log_type == 'error' %}border-danger bg-danger bg-opacity-10
+                            {% elif log.log_type == 'warning' %}border-warning bg-warning bg-opacity-10
+                            {% elif log.log_type == 'openai' %}border-info bg-info bg-opacity-10
+                            {% else %}border-success bg-success bg-opacity-10{% endif %}">
+                            <div class="d-flex justify-content-between">
+                                <span class="badge 
+                                    {% if log.log_type == 'error' %}bg-danger
+                                    {% elif log.log_type == 'warning' %}bg-warning
+                                    {% elif log.log_type == 'openai' %}bg-info
+                                    {% else %}bg-success{% endif %}">
+                                    {{ log.log_type|title }}
+                                </span>
+                                <small class="text-muted">{{ log.timestamp }}</small>
+                            </div>
+                            <div class="mt-1">{{ log.message }}</div>
+                        </div>
+                    {% endfor %}
+                    
+                    {% if logs.has_other_pages %}
+                        <nav aria-label="Log pagination">
+                            <ul class="pagination justify-content-center">
+                                {% if logs.has_previous %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ logs.previous_page_number }}">Previous</a>
+                                    </li>
+                                {% endif %}
+                                
+                                <li class="page-item active">
+                                    <span class="page-link">
+                                        Page {{ logs.number }} of {{ logs.paginator.num_pages }}
+                                    </span>
+                                </li>
+                                
+                                {% if logs.has_next %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ logs.next_page_number }}">Next</a>
+                                    </li>
+                                {% endif %}
+                            </ul>
+                        </nav>
+                    {% endif %}
+                {% else %}
+                    <p class="text-muted">No processing logs yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5>Column Mappings</h5>
+            </div>
+            <div class="card-body">
+                {% if upload.column_mappings.all %}
+                    <div class="small">
+                        {% for mapping in upload.column_mappings.all %}
+                            <div class="mb-1">
+                                <code>{{ mapping.original_column }}</code>
+                                <span class="text-muted">→</span>
+                                <strong>{{ mapping.mapped_column }}</strong>
+                                {% if mapping.confidence %}
+                                    {% if mapping.confidence >= 0.8 %}
+                                        <span class="text-success">●</span>
+                                    {% elif mapping.confidence >= 0.5 %}
+                                        <span class="text-warning">●</span>
+                                    {% else %}
+                                        <span class="text-danger">●</span>
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small">No column mappings yet.</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5>Status Mappings</h5>
+            </div>
+            <div class="card-body">
+                {% if upload.status_mappings.all %}
+                    <div class="small">
+                        {% for mapping in upload.status_mappings.all %}
+                            <div class="mb-1">
+                                <code>{{ mapping.original_status }}</code>
+                                <span class="text-muted">→</span>
+                                <strong>{{ mapping.mapped_status|default:"(empty)" }}</strong>
+                                {% if mapping.confidence %}
+                                    {% if mapping.confidence >= 0.8 %}
+                                        <span class="text-success">●</span>
+                                    {% elif mapping.confidence >= 0.5 %}
+                                        <span class="text-warning">●</span>
+                                    {% else %}
+                                        <span class="text-danger">●</span>
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small">No status mappings yet.</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5>Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{% url 'file_list' %}" class="btn btn-outline-secondary">Back to Files</a>
+                    {% if not upload.processed %}
+                        <a href="{% url 'manual_review' upload.id %}" class="btn btn-primary">Review & Process</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

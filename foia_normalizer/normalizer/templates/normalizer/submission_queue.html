@@ -1,0 +1,175 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}Submission Queue - FOIA Log Normalizer{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Submission Queue</h2>
+            <span class="badge bg-warning fs-6">{{ uploads.paginator.count }} pending review</span>
+        </div>
+
+        {% if uploads %}
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>File</th>
+                                    <th>Submitter</th>
+                                    <th>Agency</th>
+                                    <th>Submitted</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for upload in uploads %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ upload.filename }}</strong>
+                                        {% if upload.source %}
+                                            <br><small class="text-muted">{{ upload.source|truncatechars:50 }}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if upload.submitter_username %}
+                                            <span class="badge bg-info">{{ upload.submitter_username }}</span>
+                                        {% else %}
+                                            <span class="text-muted">Anonymous</span>
+                                        {% endif %}
+                                        {% if upload.uploaded_by %}
+                                            <br><small class="text-muted">User: {{ upload.uploaded_by.username }}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if upload.agency %}
+                                            {{ upload.agency }}
+                                        {% else %}
+                                            <span class="text-muted">Not specified</span>
+                                        {% endif %}
+                                        {% if upload.time_period_start and upload.time_period_end %}
+                                            <br><small class="text-muted">{{ upload.time_period_start }} to {{ upload.time_period_end }}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ upload.uploaded_at|date:"M d, Y" }}
+                                        <br><small class="text-muted">{{ upload.uploaded_at|time:"H:i" }}</small>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-warning">{{ upload.get_submission_status_display }}</span>
+                                        {% if upload.processed %}
+                                            <br><span class="badge bg-success">Processed</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <a href="{% url 'approve_submission' upload.id %}" class="btn btn-sm btn-primary">
+                                                Review
+                                            </a>
+                                            <a href="{% url 'file_detail' upload.id %}" class="btn btn-sm btn-outline-secondary">
+                                                Details
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            {% if uploads.has_other_pages %}
+            <nav aria-label="Submission queue pagination" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if uploads.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page=1">&laquo; First</a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ uploads.previous_page_number }}">Previous</a>
+                        </li>
+                    {% endif %}
+
+                    {% for num in uploads.paginator.page_range %}
+                        {% if uploads.number == num %}
+                            <li class="page-item active">
+                                <span class="page-link">{{ num }}</span>
+                            </li>
+                        {% elif num > uploads.number|add:'-3' and num < uploads.number|add:'3' %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if uploads.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ uploads.next_page_number }}">Next</a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ uploads.paginator.num_pages }}">Last &raquo;</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+
+        {% else %}
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <h4 class="text-muted">No pending submissions</h4>
+                    <p class="text-muted">All submissions have been reviewed.</p>
+                    <a href="{% url 'home' %}" class="btn btn-primary">Back to Home</a>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Review Guidelines</h5>
+            </div>
+            <div class="card-body">
+                <ul class="small mb-0">
+                    <li>Check that column mappings make sense</li>
+                    <li>Verify status mappings are appropriate</li>
+                    <li>Ensure the source information is credible</li>
+                    <li>Look for obvious data quality issues</li>
+                    <li>Approve if the submission adds value to the community</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Quick Stats</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-4">
+                        <h4>{{ uploads.paginator.count }}</h4>
+                        <small class="text-muted">Pending</small>
+                    </div>
+                    <div class="col-4">
+                        <h4>-</h4>
+                        <small class="text-muted">This Week</small>
+                    </div>
+                    <div class="col-4">
+                        <h4>-</h4>
+                        <small class="text-muted">Your Reviews</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
