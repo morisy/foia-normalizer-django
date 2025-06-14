@@ -158,21 +158,44 @@
                     {% if potential_status_values %}
                     <div class="mb-4">
                         <h5>Status Column Selection</h5>
-                        <p class="text-muted">If no status column was automatically detected, select which column contains status values:</p>
+                        <p class="text-muted">Select one or more columns that contain status values. If multiple columns are selected, you can set their priority order.</p>
                         
                         <div class="mb-3">
-                            <label class="form-label">Select Status Column:</label>
-                            <select id="status-column-select" name="manual_status_column" class="form-select">
-                                <option value="">-- No status column --</option>
+                            <label class="form-label">Available Status Columns:</label>
+                            <div class="list-group" id="status-columns-list">
                                 {% for col, values in potential_status_values.items %}
-                                    <option value="{{ col }}">{{ col }} ({{ values|length }} unique values)</option>
+                                <div class="list-group-item">
+                                    <div class="form-check">
+                                        <input class="form-check-input status-column-checkbox" type="checkbox" 
+                                               value="{{ col }}" id="status_col_{{ forloop.counter }}"
+                                               data-values='{{ values|json_script:"" }}'
+                                               name="manual_status_columns">
+                                        <label class="form-check-label" for="status_col_{{ forloop.counter }}">
+                                            <strong>{{ col }}</strong> ({{ values|length }} unique values)
+                                            <br>
+                                            <small class="text-muted">Sample: 
+                                                {% for val in values|slice:":3" %}
+                                                    <code>{{ val }}</code>{% if not forloop.last %}, {% endif %}
+                                                {% endfor %}
+                                                {% if values|length > 3 %}...{% endif %}
+                                            </small>
+                                        </label>
+                                    </div>
+                                </div>
                                 {% endfor %}
-                            </select>
+                            </div>
                         </div>
                         
-                        <div id="status-values-preview" class="d-none">
-                            <p class="text-muted">Sample status values from selected column:</p>
-                            <div id="status-values-list" class="mb-3"></div>
+                        <div id="status-column-priority" class="mb-3 d-none">
+                            <label class="form-label">Column Priority (drag to reorder - highest priority first):</label>
+                            <div class="list-group" id="priority-list">
+                            </div>
+                            <small class="text-muted">When rows have values in multiple status columns, the first non-empty value will be used.</small>
+                        </div>
+                        
+                        <div id="combined-status-preview" class="d-none">
+                            <label class="form-label">Combined unique status values from selected columns:</label>
+                            <div id="combined-status-values" class="mb-3"></div>
                         </div>
                     </div>
                     {% endif %}
@@ -280,10 +303,12 @@ document.addEventListener('DOMContentLoaded', function() {
         processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Processing...';
     });
     
-    // Status column selection handling
-    const statusColumnSelect = document.getElementById('status-column-select');
-    const statusValuesPreview = document.getElementById('status-values-preview');
-    const statusValuesList = document.getElementById('status-values-list');
+    // Multiple status column selection handling
+    const statusCheckboxes = document.querySelectorAll('.status-column-checkbox');
+    const priorityDiv = document.getElementById('status-column-priority');
+    const priorityList = document.getElementById('priority-list');
+    const combinedPreview = document.getElementById('combined-status-preview');
+    const combinedValues = document.getElementById('combined-status-values');
     const dynamicStatusMappings = document.getElementById('dynamic-status-mappings');
     const dynamicStatusTableBody = document.getElementById('dynamic-status-table-body');
     
@@ -295,78 +320,193 @@ document.addEventListener('DOMContentLoaded', function() {
     const sflfStatuses = {{ sflf_statuses|json_script:"sflf-statuses" }};
     const sflfStatusList = JSON.parse(document.getElementById('sflf-statuses').textContent);
     
-    if (statusColumnSelect) {
-        statusColumnSelect.addEventListener('change', function() {
-            const selectedColumn = this.value;
-            
-            if (selectedColumn && statusValuesData[selectedColumn]) {
-                // Show preview of status values
-                statusValuesPreview.classList.remove('d-none');
-                const values = statusValuesData[selectedColumn];
-                const sampleValues = values.slice(0, 5);
-                statusValuesList.innerHTML = '<code>' + sampleValues.join('</code>, <code>') + '</code>' + 
-                    (values.length > 5 ? ' ... and ' + (values.length - 5) + ' more' : '');
-                
-                // Show dynamic status mapping table
-                dynamicStatusMappings.classList.remove('d-none');
-                dynamicStatusTableBody.innerHTML = '';
-                
-                // Create mapping rows for each unique status value
-                values.forEach(function(statusValue) {
-                    const row = document.createElement('tr');
-                    const statusCell = document.createElement('td');
-                    statusCell.innerHTML = '<code>' + statusValue + '</code>';
-                    
-                    const mappingCell = document.createElement('td');
-                    const select = document.createElement('select');
-                    select.name = 'dynamic_status_' + statusValue.toString().toLowerCase().replace(/\s+/g, '_');
-                    select.className = 'form-select form-select-sm';
-                    
-                    // Add options
-                    const defaultOption = document.createElement('option');
-                    defaultOption.value = '';
-                    defaultOption.textContent = '-- Do not map --';
-                    select.appendChild(defaultOption);
-                    
-                    sflfStatusList.forEach(function(status) {
-                        const option = document.createElement('option');
-                        option.value = status;
-                        option.textContent = status || '(empty)';
-                        
-                        // Try to auto-select based on fuzzy matching
-                        const statusLower = statusValue.toString().toLowerCase();
-                        if (status && (
-                            (status === 'done' && (statusLower.includes('complete') || statusLower.includes('closed'))) ||
-                            (status === 'processed' && (statusLower.includes('process') || statusLower.includes('pending'))) ||
-                            (status === 'rejected' && (statusLower.includes('reject') || statusLower.includes('denied'))) ||
-                            (status === 'partial' && statusLower.includes('partial')) ||
-                            (status === 'abandoned' && (statusLower.includes('abandon') || statusLower.includes('withdraw')))
-                        )) {
-                            option.selected = true;
-                        }
-                        
-                        select.appendChild(option);
-                    });
-                    
-                    mappingCell.appendChild(select);
-                    row.appendChild(statusCell);
-                    row.appendChild(mappingCell);
-                    dynamicStatusTableBody.appendChild(row);
-                });
-                
-                // Update the status column mapping in column mappings
-                const columnMappingSelects = document.querySelectorAll('select[name^="column_"]');
-                columnMappingSelects.forEach(function(select) {
-                    if (select.closest('tr').querySelector('code').textContent === selectedColumn) {
-                        select.value = 'status';
-                    }
-                });
-            } else {
-                // Hide preview and dynamic mappings
-                statusValuesPreview.classList.add('d-none');
-                dynamicStatusMappings.classList.add('d-none');
+    // Track selected columns and their order
+    let selectedColumns = [];
+    
+    // Handle checkbox changes
+    statusCheckboxes.forEach(function(checkbox) {
+        checkbox.addEventListener('change', function() {
+            updateSelectedColumns();
+        });
+    });
+    
+    function updateSelectedColumns() {
+        selectedColumns = [];
+        statusCheckboxes.forEach(function(checkbox) {
+            if (checkbox.checked) {
+                selectedColumns.push(checkbox.value);
             }
         });
+        
+        if (selectedColumns.length > 0) {
+            // Show priority ordering if multiple columns selected
+            if (selectedColumns.length > 1) {
+                priorityDiv.classList.remove('d-none');
+                updatePriorityList();
+            } else {
+                priorityDiv.classList.add('d-none');
+            }
+            
+            // Show combined status values
+            combinedPreview.classList.remove('d-none');
+            updateCombinedStatusValues();
+            
+            // Update column mappings to mark these as status columns
+            const columnMappingSelects = document.querySelectorAll('select[name^="column_"]');
+            columnMappingSelects.forEach(function(select) {
+                const colName = select.closest('tr').querySelector('code').textContent;
+                if (selectedColumns.includes(colName)) {
+                    select.value = 'status';
+                }
+            });
+        } else {
+            priorityDiv.classList.add('d-none');
+            combinedPreview.classList.add('d-none');
+            dynamicStatusMappings.classList.add('d-none');
+        }
+    }
+    
+    function updatePriorityList() {
+        priorityList.innerHTML = '';
+        selectedColumns.forEach(function(col, index) {
+            const item = document.createElement('div');
+            item.className = 'list-group-item d-flex justify-content-between align-items-center';
+            item.draggable = true;
+            item.dataset.column = col;
+            item.innerHTML = `
+                <span>
+                    <i class="bi bi-grip-vertical me-2"></i>
+                    <strong>${col}</strong>
+                </span>
+                <span class="badge bg-secondary">${index + 1}</span>
+                <input type="hidden" name="status_column_priority" value="${col}">
+            `;
+            
+            // Add drag and drop handlers
+            item.addEventListener('dragstart', handleDragStart);
+            item.addEventListener('dragend', handleDragEnd);
+            item.addEventListener('dragover', handleDragOver);
+            item.addEventListener('drop', handleDrop);
+            
+            priorityList.appendChild(item);
+        });
+    }
+    
+    function updateCombinedStatusValues() {
+        // Collect all unique status values from selected columns
+        const allValues = new Set();
+        const valueToColumn = {};
+        
+        selectedColumns.forEach(function(col) {
+            if (statusValuesData[col]) {
+                statusValuesData[col].forEach(function(val) {
+                    allValues.add(val);
+                    if (!valueToColumn[val]) {
+                        valueToColumn[val] = [];
+                    }
+                    valueToColumn[val].push(col);
+                });
+            }
+        });
+        
+        // Show combined values
+        const sortedValues = Array.from(allValues).sort();
+        combinedValues.innerHTML = `<strong>${sortedValues.length} unique status values found</strong>`;
+        
+        // Show dynamic status mapping table
+        dynamicStatusMappings.classList.remove('d-none');
+        dynamicStatusTableBody.innerHTML = '';
+        
+        // Create mapping rows for each unique status value
+        sortedValues.forEach(function(statusValue) {
+            const row = document.createElement('tr');
+            const statusCell = document.createElement('td');
+            const columns = valueToColumn[statusValue].join(', ');
+            statusCell.innerHTML = `<code>${statusValue}</code><br><small class="text-muted">From: ${columns}</small>`;
+            
+            const mappingCell = document.createElement('td');
+            const select = document.createElement('select');
+            select.name = 'dynamic_status_' + statusValue.toString().toLowerCase().replace(/[^a-z0-9]/g, '_');
+            select.className = 'form-select form-select-sm';
+            
+            // Add options
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = '-- Do not map --';
+            select.appendChild(defaultOption);
+            
+            sflfStatusList.forEach(function(status) {
+                const option = document.createElement('option');
+                option.value = status;
+                option.textContent = status || '(empty)';
+                
+                // Try to auto-select based on fuzzy matching
+                const statusLower = statusValue.toString().toLowerCase();
+                if (status && (
+                    (status === 'done' && (statusLower.includes('complete') || statusLower.includes('closed'))) ||
+                    (status === 'processed' && (statusLower.includes('process') || statusLower.includes('pending'))) ||
+                    (status === 'rejected' && (statusLower.includes('reject') || statusLower.includes('denied'))) ||
+                    (status === 'partial' && statusLower.includes('partial')) ||
+                    (status === 'abandoned' && (statusLower.includes('abandon') || statusLower.includes('withdraw'))) ||
+                    (status === 'appealing' && statusLower.includes('appeal')) ||
+                    (status === 'fix' && (statusLower.includes('fix') || statusLower.includes('clarif'))) ||
+                    (status === 'payment' && (statusLower.includes('payment') || statusLower.includes('fee'))) ||
+                    (status === 'lawsuit' && (statusLower.includes('lawsuit') || statusLower.includes('litigat'))) ||
+                    (status === 'no_docs' && (statusLower.includes('no doc') || statusLower.includes('no record')))
+                )) {
+                    option.selected = true;
+                }
+                
+                select.appendChild(option);
+            });
+            
+            mappingCell.appendChild(select);
+            row.appendChild(statusCell);
+            row.appendChild(mappingCell);
+            dynamicStatusTableBody.appendChild(row);
+        });
+    }
+    
+    // Drag and drop handlers
+    let draggedElement = null;
+    
+    function handleDragStart(e) {
+        draggedElement = this;
+        this.style.opacity = '0.4';
+    }
+    
+    function handleDragEnd(e) {
+        this.style.opacity = '';
+    }
+    
+    function handleDragOver(e) {
+        if (e.preventDefault) {
+            e.preventDefault();
+        }
+        return false;
+    }
+    
+    function handleDrop(e) {
+        if (e.stopPropagation) {
+            e.stopPropagation();
+        }
+        
+        if (draggedElement !== this) {
+            const draggedCol = draggedElement.dataset.column;
+            const targetCol = this.dataset.column;
+            
+            // Update the selectedColumns array
+            const draggedIndex = selectedColumns.indexOf(draggedCol);
+            const targetIndex = selectedColumns.indexOf(targetCol);
+            
+            if (draggedIndex > -1 && targetIndex > -1) {
+                selectedColumns.splice(draggedIndex, 1);
+                selectedColumns.splice(targetIndex, 0, draggedCol);
+                updatePriorityList();
+            }
+        }
+        
+        return false;
     }
 });
 </script>

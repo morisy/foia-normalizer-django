@@ -80,25 +80,46 @@ def manual_review(request, upload_id):
     if request.method == 'POST':
         # Process the manual mappings and submit for approval
         try:
-            # Handle manual status column selection
-            manual_status_column = request.POST.get('manual_status_column')
-            if manual_status_column:
-                # Update column mapping to mark this as the status column
-                mapping, created = ColumnMapping.objects.update_or_create(
-                    upload=upload,
-                    original_column=manual_status_column,
-                    defaults={
-                        'mapped_column': 'status',
-                        'confidence': 1.0,
-                        'user_confirmed': True
-                    }
-                )
+            # Handle manual status column selection (now supports multiple columns)
+            manual_status_columns = request.POST.getlist('manual_status_columns')
+            status_column_priority = request.POST.getlist('status_column_priority')
+            
+            # Use priority order if provided, otherwise use selection order
+            if status_column_priority:
+                manual_status_columns = status_column_priority
+            
+            if manual_status_columns:
+                # Store the priority order in upload metadata
+                upload.metadata = upload.metadata or {}
+                upload.metadata['status_column_priority'] = manual_status_columns
+                upload.save()
                 
-                # Process dynamic status mappings
+                # Update column mappings for all selected status columns
+                for col in manual_status_columns:
+                    mapping, created = ColumnMapping.objects.update_or_create(
+                        upload=upload,
+                        original_column=col,
+                        defaults={
+                            'mapped_column': 'status',
+                            'confidence': 1.0,
+                            'user_confirmed': True
+                        }
+                    )
+                
+                # Process status mappings from all selected columns
                 normalizer = FOIANormalizer(upload)
                 df = normalizer.load_file()
-                if manual_status_column in df.columns:
-                    normalizer.map_statuses(df, manual_status_column)
+                
+                # Collect unique status values from all columns
+                all_status_values = set()
+                for col in manual_status_columns:
+                    if col in df.columns:
+                        unique_values = df[col].dropna().unique()
+                        all_status_values.update(unique_values)
+                
+                # Map all unique status values
+                for status_val in all_status_values:
+                    normalizer._fuzzy_map_status(status_val)
             
             # Update column mappings based on form data
             for key, value in request.POST.items():
@@ -329,8 +350,34 @@ def leaderboard(request):
         approved_count__gt=0
     ).order_by('-approved_count', '-submissions_count')[:50]
     
+    # Calculate pending counts for each contributor
+    contributor_data = []
+    for contributor in contributors:
+        # Get pending count for this contributor
+        pending_count = FOIAUpload.objects.filter(
+            submitter_username=contributor.username,
+            submission_status='pending'
+        ).count()
+        
+        # Calculate approval rate (approved / (approved + rejected))
+        total_decided = contributor.approved_count + contributor.rejected_count
+        if total_decided > 0:
+            approval_rate = (contributor.approved_count / total_decided) * 100
+        else:
+            approval_rate = 0
+        
+        contributor_data.append({
+            'username': contributor.username,
+            'submissions_count': contributor.submissions_count,
+            'approved_count': contributor.approved_count,
+            'rejected_count': contributor.rejected_count,
+            'pending_count': pending_count,
+            'approval_rate': approval_rate,
+            'last_submission': contributor.last_submission,
+        })
+    
     return render(request, 'normalizer/leaderboard.html', {
-        'contributors': contributors,
+        'contributors': contributor_data,
     })
 
 

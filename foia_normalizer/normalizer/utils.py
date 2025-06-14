@@ -410,41 +410,94 @@ class FOIANormalizer:
         # Create a new dataframe with only SFLF columns that have data
         df_normalized = pd.DataFrame()
         
+        # Handle multiple status columns separately
+        status_columns = []
+        for orig_col, mapped_col in column_mappings.items():
+            if mapped_col == 'status' and orig_col in df.columns:
+                status_columns.append(orig_col)
+        
         # Map each SFLF column from the original data
         for sflf_col in self.sflf_columns:
-            # Find which original column maps to this SFLF column
-            source_col = None
-            for orig_col, mapped_col in column_mappings.items():
-                if mapped_col == sflf_col:
-                    source_col = orig_col
-                    break
-            
-            if source_col and source_col in df.columns:
-                # Check if the source column has any meaningful data
-                source_data = df[source_col]
-                non_empty_count = source_data.count()  # Counts non-null values
-                non_whitespace_count = sum(1 for val in source_data if pd.notna(val) and str(val).strip())
+            if sflf_col == 'status' and status_columns:
+                # Handle multiple status columns with priority
+                self._handle_multiple_status_columns(df, df_normalized, status_columns, status_mappings)
+            else:
+                # Find which original column maps to this SFLF column
+                source_col = None
+                for orig_col, mapped_col in column_mappings.items():
+                    if mapped_col == sflf_col:
+                        source_col = orig_col
+                        break
                 
-                # Only include column if it has meaningful data
-                if non_empty_count > 0 and non_whitespace_count > 0:
-                    # Copy data from source column
-                    df_normalized[sflf_col] = df[source_col]
+                if source_col and source_col in df.columns:
+                    # Check if the source column has any meaningful data
+                    source_data = df[source_col]
+                    non_empty_count = source_data.count()  # Counts non-null values
+                    non_whitespace_count = sum(1 for val in source_data if pd.notna(val) and str(val).strip())
                     
-                    # Apply status mappings if this is the status column
-                    if sflf_col == 'status':
-                        df_normalized[sflf_col] = df_normalized[sflf_col].map(
-                            lambda x: status_mappings.get(x, x) if pd.notna(x) else x
-                        )
-                    
-                    self.log_message('info', f'Included column "{sflf_col}" with {non_whitespace_count} data values')
-                else:
-                    self.log_message('info', f'Skipped empty column "{sflf_col}" (mapped from "{source_col}")')
-            # Note: We no longer create empty columns for unmapped SFLF columns
+                    # Only include column if it has meaningful data
+                    if non_empty_count > 0 and non_whitespace_count > 0:
+                        # Copy data from source column
+                        df_normalized[sflf_col] = df[source_col]
+                        
+                        self.log_message('info', f'Included column "{sflf_col}" with {non_whitespace_count} data values')
+                    else:
+                        self.log_message('info', f'Skipped empty column "{sflf_col}" (mapped from "{source_col}")')
+                # Note: We no longer create empty columns for unmapped SFLF columns
         
         # Add metadata fields from upload instance
         self._add_metadata_columns(df_normalized)
         
         return df_normalized
+    
+    def _handle_multiple_status_columns(self, df, df_normalized, status_columns, status_mappings):
+        """Handle multiple status columns with priority order"""
+        # Get priority order from metadata
+        priority_order = []
+        if self.upload.metadata and 'status_column_priority' in self.upload.metadata:
+            priority_order = self.upload.metadata['status_column_priority']
+            self.log_message('info', f'Using status column priority order: {priority_order}')
+        
+        # Sort status columns by priority
+        if priority_order:
+            status_columns = sorted(status_columns, 
+                                  key=lambda x: priority_order.index(x) if x in priority_order else len(priority_order))
+        
+        self.log_message('info', f'Processing {len(status_columns)} status columns: {status_columns}')
+        
+        # Create status column by taking first non-empty value from priority-ordered columns
+        status_values = []
+        status_source_tracking = []  # Track which column each status came from
+        
+        for idx, row in df.iterrows():
+            final_status = ''
+            source_column = ''
+            
+            # Check each status column in priority order
+            for col in status_columns:
+                if col in row and pd.notna(row[col]) and str(row[col]).strip():
+                    original_status = str(row[col])
+                    
+                    # Apply status mapping
+                    mapped_status = status_mappings.get(original_status, original_status)
+                    
+                    final_status = mapped_status
+                    source_column = col
+                    break  # Use first non-empty status found
+            
+            status_values.append(final_status)
+            status_source_tracking.append(source_column)
+        
+        # Add the combined status column
+        df_normalized['status'] = status_values
+        
+        # Log statistics about status resolution
+        source_counts = pd.Series(status_source_tracking).value_counts()
+        self.log_message('info', f'Status values resolved from columns: {source_counts.to_dict()}')
+        
+        # Count non-empty statuses
+        non_empty_count = sum(1 for s in status_values if s)
+        self.log_message('info', f'Included combined status column with {non_empty_count} non-empty values')
     
     def _add_metadata_columns(self, df_normalized):
         """Add SFLF metadata columns from upload instance"""
