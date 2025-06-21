@@ -223,11 +223,15 @@ document.addEventListener('DOMContentLoaded', function() {
         
         progressArea.style.display = 'block';
         
+        // Get CSRF token
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        
         fetch('{% url "upload_file" %}', {
             method: 'POST',
             body: formData,
             headers: {
-                'X-Requested-With': 'XMLHttpRequest'
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken
             }
         })
         .then(response => response.json())
