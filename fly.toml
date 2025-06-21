@@ -1,4 +1,4 @@
-app = "foia-normalizer"
+app = "foia-normalizer-django"
 primary_region = "iad"
 
 [build]
