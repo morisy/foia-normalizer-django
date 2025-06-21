@@ -1,0 +1,29 @@
+app = "foia-normalizer"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "8080"
+  DJANGO_SETTINGS_MODULE = "foia_normalizer.settings"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
+
+[mounts]
+  destination = "/app/media"
+  source = "foia_media"
+
+[[statics]]
+  guest_path = "/app/staticfiles"
+  url_prefix = "/static/"

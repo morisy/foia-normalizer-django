@@ -1,0 +1,130 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}Submission Status - FOIA Log Normalizer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header text-center">
+                <h3>Submission Status</h3>
+            </div>
+            <div class="card-body text-center">
+                {% if upload.submission_status == 'pending' %}
+                    <div class="mb-4">
+                        <i class="fas fa-clock fa-3x text-warning mb-3"></i>
+                        <h4 class="text-warning">Pending Review</h4>
+                        <p class="lead">Your submission is in the queue awaiting moderator review.</p>
+                    </div>
+                    <div class="alert alert-info">
+                        <strong>What happens next?</strong><br>
+                        Our community moderators will review your submission to ensure it meets quality standards. 
+                        This typically takes 1-3 business days.
+                    </div>
+                    
+                {% elif upload.submission_status == 'approved' %}
+                    <div class="mb-4">
+                        <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
+                        <h4 class="text-success">Approved!</h4>
+                        <p class="lead">Your submission has been approved and is now publicly available.</p>
+                    </div>
+                    <div class="alert alert-success">
+                        <strong>Thank you for contributing!</strong><br>
+                        Your FOIA log has been added to the community database and can now be downloaded by others.
+                        {% if upload.submitter_username %}
+                            Your contribution is credited to {{ upload.submitter_username }} on the leaderboard.
+                        {% endif %}
+                    </div>
+                    
+                {% elif upload.submission_status == 'rejected' %}
+                    <div class="mb-4">
+                        <i class="fas fa-times-circle fa-3x text-danger mb-3"></i>
+                        <h4 class="text-danger">Rejected</h4>
+                        <p class="lead">Unfortunately, your submission did not meet our quality standards.</p>
+                    </div>
+                    {% if upload.rejection_reason %}
+                    <div class="alert alert-danger">
+                        <strong>Reason for rejection:</strong><br>
+                        {{ upload.rejection_reason }}
+                    </div>
+                    {% endif %}
+                    <div class="alert alert-info">
+                        <strong>What you can do:</strong><br>
+                        You can address the issues mentioned above and submit a new version of your file.
+                    </div>
+                {% endif %}
+
+                <!-- File Information -->
+                <div class="row mt-4">
+                    <div class="col-md-6 text-start">
+                        <h6>File Information</h6>
+                        <p><strong>Filename:</strong> {{ upload.filename }}</p>
+                        <p><strong>Submitted:</strong> {{ upload.uploaded_at|date:"M d, Y H:i" }}</p>
+                        {% if upload.agency %}
+                        <p><strong>Agency:</strong> {{ upload.agency }}</p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6 text-start">
+                        {% if upload.reviewed_by and upload.reviewed_at %}
+                        <h6>Review Information</h6>
+                        <p><strong>Reviewed by:</strong> {{ upload.reviewed_by.username }}</p>
+                        <p><strong>Reviewed on:</strong> {{ upload.reviewed_at|date:"M d, Y H:i" }}</p>
+                        {% endif %}
+                        {% if upload.submitter_username %}
+                        <p><strong>Attributed to:</strong> {{ upload.submitter_username }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mt-4">
+                    {% if upload.submission_status == 'approved' %}
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                            <a href="{% url 'file_detail' upload.id %}" class="btn btn-primary">
+                                View Details
+                            </a>
+                            {% if upload.processed and upload.output_file %}
+                            <a href="{% url 'download_file' upload.id %}" class="btn btn-success">
+                                Download Normalized File
+                            </a>
+                            {% endif %}
+                            <a href="{% url 'leaderboard' %}" class="btn btn-outline-primary">
+                                View Leaderboard
+                            </a>
+                        </div>
+                    {% else %}
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                            <a href="{% url 'home' %}" class="btn btn-primary">
+                                Submit Another File
+                            </a>
+                            <a href="{% url 'file_list' %}" class="btn btn-outline-primary">
+                                Browse Approved Files
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Information -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>About the Review Process</h5>
+            </div>
+            <div class="card-body">
+                <p class="small">Our community moderators review submissions to ensure:</p>
+                <ul class="small">
+                    <li>The file contains actual FOIA log data</li>
+                    <li>Column mappings are appropriate and accurate</li>
+                    <li>Source information is provided and credible</li>
+                    <li>The data adds value to the community database</li>
+                </ul>
+                <p class="small mb-0">
+                    <strong>Questions?</strong> Feel free to submit another file with any improvements, 
+                    or browse our existing approved submissions to see examples of what works well.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
