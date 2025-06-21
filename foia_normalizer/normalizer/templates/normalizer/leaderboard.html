@@ -1,0 +1,100 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}Leaderboard - FOIA Log Normalizer{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Top Contributors</h1>
+            <p class="lead">Recognizing our community members who have contributed the most FOIA logs to the normalizer.</p>
+            
+            {% if contributors %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th scope="col">#</th>
+                                <th scope="col">Username</th>
+                                <th scope="col">Approved Submissions</th>
+                                <th scope="col">Total Submissions</th>
+                                <th scope="col">Approval Rate</th>
+                                <th scope="col">Last Submission</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for contributor in contributors %}
+                                <tr>
+                                    <th scope="row">{{ forloop.counter }}</th>
+                                    <td>
+                                        {% if forloop.counter <= 3 %}
+                                            {% if forloop.counter == 1 %}
+                                                <span class="badge bg-warning text-dark">🥇</span>
+                                            {% elif forloop.counter == 2 %}
+                                                <span class="badge bg-secondary">🥈</span>
+                                            {% elif forloop.counter == 3 %}
+                                                <span class="badge bg-danger">🥉</span>
+                                            {% endif %}
+                                        {% endif %}
+                                        <strong>{{ contributor.username }}</strong>
+                                    </td>
+                                    <td>{{ contributor.approved_count }}</td>
+                                    <td>
+                                        {{ contributor.submissions_count }}
+                                        {% if contributor.pending_count > 0 %}
+                                            <span class="text-muted">({{ contributor.pending_count }} pending)</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if contributor.approval_rate %}
+                                            {{ contributor.approval_rate|floatformat:0 }}%
+                                        {% else %}
+                                            N/A
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if contributor.last_submission %}
+                                            {{ contributor.last_submission|date:"M d, Y" }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info" role="alert">
+                    <h4 class="alert-heading">No contributors yet!</h4>
+                    <p>Be the first to contribute a FOIA log to our normalizer.</p>
+                    <hr>
+                    <p class="mb-0">
+                        <a href="{% url 'home' %}" class="btn btn-primary">Upload a FOIA Log</a>
+                    </p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h5 class="card-title">About the Leaderboard</h5>
+                    <p class="card-text">
+                        This leaderboard recognizes community members who have contributed FOIA logs for normalization. 
+                        Only approved submissions count towards your score. Keep contributing to climb the ranks!
+                    </p>
+                    <p class="card-text">
+                        <small class="text-muted">
+                            Rankings are based on the number of approved submissions. 
+                            The leaderboard shows the top 50 contributors.
+                        </small>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
