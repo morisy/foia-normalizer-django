@@ -1,0 +1,281 @@
+{% extends 'normalizer/base.html' %}
+
+{% block title %}Review Submission - FOIA Log Normalizer{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Review Submission</h2>
+            <a href="{% url 'submission_queue' %}" class="btn btn-outline-secondary">
+                ← Back to Queue
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Main Content -->
+    <div class="col-md-8">
+        <!-- File Information -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>File Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p><strong>Filename:</strong> {{ upload.filename }}</p>
+                        <p><strong>Uploaded:</strong> {{ upload.uploaded_at|date:"M d, Y H:i" }}</p>
+                        <p><strong>Status:</strong> 
+                            <span class="badge bg-warning">{{ upload.get_submission_status_display }}</span>
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <p><strong>Submitter:</strong> 
+                            {% if upload.submitter_username %}
+                                {{ upload.submitter_username }}
+                            {% else %}
+                                <span class="text-muted">Anonymous</span>
+                            {% endif %}
+                        </p>
+                        <p><strong>Agency:</strong> 
+                            {% if upload.agency %}
+                                {{ upload.agency }}
+                            {% else %}
+                                <span class="text-muted">Not specified</span>
+                            {% endif %}
+                        </p>
+                        <p><strong>Time Period:</strong> 
+                            {% if upload.time_period_start and upload.time_period_end %}
+                                {{ upload.time_period_start }} to {{ upload.time_period_end }}
+                            {% else %}
+                                <span class="text-muted">Not specified</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                {% if upload.source %}
+                <div class="row">
+                    <div class="col-12">
+                        <p><strong>Source:</strong> {{ upload.source }}</p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Column Mappings -->
+        {% if column_mappings %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Column Mappings</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Original Column</th>
+                                <th>Mapped To</th>
+                                <th>Confidence</th>
+                                <th>Confirmed</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for mapping in column_mappings %}
+                            <tr>
+                                <td><code>{{ mapping.original_column }}</code></td>
+                                <td>
+                                    {% if mapping.mapped_column != mapping.original_column %}
+                                        <strong>{{ mapping.mapped_column }}</strong>
+                                    {% else %}
+                                        <span class="text-muted">No mapping</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if mapping.confidence %}
+                                        <span class="badge bg-{% if mapping.confidence > 0.8 %}success{% elif mapping.confidence > 0.5 %}warning{% else %}danger{% endif %}">
+                                            {{ mapping.confidence|floatformat:2 }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if mapping.user_confirmed %}
+                                        <span class="badge bg-success">✓</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Auto</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Status Mappings -->
+        {% if status_mappings %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Status Mappings</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Original Status</th>
+                                <th>Mapped To</th>
+                                <th>Confidence</th>
+                                <th>Confirmed</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for mapping in status_mappings %}
+                            <tr>
+                                <td><code>{{ mapping.original_status }}</code></td>
+                                <td>
+                                    {% if mapping.mapped_status != mapping.original_status %}
+                                        <strong>{{ mapping.mapped_status }}</strong>
+                                    {% else %}
+                                        <span class="text-muted">No mapping</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if mapping.confidence %}
+                                        <span class="badge bg-{% if mapping.confidence > 0.8 %}success{% elif mapping.confidence > 0.5 %}warning{% else %}danger{% endif %}">
+                                            {{ mapping.confidence|floatformat:2 }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if mapping.user_confirmed %}
+                                        <span class="badge bg-success">✓</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Auto</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Processing Logs -->
+        {% if logs %}
+        <div class="card">
+            <div class="card-header">
+                <h5>Processing Logs</h5>
+            </div>
+            <div class="card-body">
+                <div style="max-height: 300px; overflow-y: auto;">
+                    {% for log in logs %}
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="flex-grow-1">
+                            <span class="badge bg-{% if log.log_type == 'error' %}danger{% elif log.log_type == 'warning' %}warning{% else %}info{% endif %} me-2">
+                                {{ log.log_type|upper }}
+                            </span>
+                            <small>{{ log.message }}</small>
+                        </div>
+                        <small class="text-muted">{{ log.timestamp|date:"H:i:s" }}</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Sidebar -->
+    <div class="col-md-4">
+        <!-- Approval Form -->
+        <div class="card">
+            <div class="card-header">
+                <h5>Review Decision</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        {{ form.action.label_tag }}
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="action" id="approve" value="approve">
+                            <label class="form-check-label text-success" for="approve">
+                                <strong>Approve</strong> - Submission looks good
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="action" id="reject" value="reject">
+                            <label class="form-check-label text-danger" for="reject">
+                                <strong>Reject</strong> - Issues found
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mb-3" id="rejection-reason" style="display: none;">
+                        {{ form.rejection_reason.label_tag }}
+                        {{ form.rejection_reason }}
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            Submit Review
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6>Quick Actions</h6>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{% url 'file_detail' upload.id %}" class="btn btn-sm btn-outline-primary">
+                        View File Details
+                    </a>
+                    {% if upload.processed and upload.output_file %}
+                    <a href="{% url 'download_file' upload.id %}" class="btn btn-sm btn-outline-success">
+                        Download Processed File
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block javascript %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const actionRadios = document.querySelectorAll('input[name="action"]');
+    const rejectionReason = document.getElementById('rejection-reason');
+    
+    actionRadios.forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.value === 'reject') {
+                rejectionReason.style.display = 'block';
+                rejectionReason.querySelector('textarea').required = true;
+            } else {
+                rejectionReason.style.display = 'none';
+                rejectionReason.querySelector('textarea').required = false;
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

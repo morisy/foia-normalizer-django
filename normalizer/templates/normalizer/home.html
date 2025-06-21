@@ -13,19 +13,21 @@
                 <form method="post" enctype="multipart/form-data" id="upload-form">
                     {% csrf_token %}
                     
-                    <div class="mb-3">
-                        <label class="form-label">Processing Mode</label>
-                        <div class="btn-group w-100" role="group">
-                            <input type="radio" class="btn-check" name="mode" id="manual" value="manual" checked>
-                            <label class="btn btn-outline-primary" for="manual">Manual Review</label>
-                            
-                            <input type="radio" class="btn-check" name="mode" id="ai_assist" value="ai_assist">
-                            <label class="btn btn-outline-success" for="ai_assist">AI Assist</label>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="{{ form.submitter_username.id_for_label }}" class="form-label">Your Username (Optional)</label>
+                                {{ form.submitter_username }}
+                                <small class="form-text text-muted">For attribution on the leaderboard</small>
+                            </div>
                         </div>
-                        <small class="form-text text-muted">
-                            <strong>Manual:</strong> Review and confirm column/status mappings before processing.<br>
-                            <strong>AI Assist:</strong> Automatically process files using AI and synonyms.
-                        </small>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="{{ form.submitter_email.id_for_label }}" class="form-label">Your Email (Optional)</label>
+                                {{ form.submitter_email }}
+                                <small class="form-text text-muted">Kept private, not displayed publicly</small>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="mb-3">
@@ -89,12 +91,16 @@
                                     <small>{{ upload.uploaded_at|date:"M d, H:i" }}</small>
                                 </div>
                                 <p class="mb-1">
-                                    {% if upload.processed %}
-                                        <span class="badge bg-success">Processed</span>
-                                    {% else %}
-                                        <span class="badge bg-warning">Pending</span>
+                                    {% if upload.submission_status == 'approved' %}
+                                        <span class="badge bg-success">Approved</span>
+                                    {% elif upload.submission_status == 'pending' %}
+                                        <span class="badge bg-warning">Pending Review</span>
+                                    {% elif upload.submission_status == 'rejected' %}
+                                        <span class="badge bg-danger">Rejected</span>
                                     {% endif %}
-                                    <span class="badge bg-info">{{ upload.processing_mode|title }}</span>
+                                    {% if upload.submitter_username %}
+                                        <small class="text-muted">by {{ upload.submitter_username }}</small>
+                                    {% endif %}
                                 </p>
                             </a>
                         {% endfor %}
@@ -107,20 +113,45 @@
         
         <div class="card mt-3">
             <div class="card-header">
+                <h5>Community Stats</h5>
+            </div>
+            <div class="card-body">
+                {% if stats %}
+                <div class="row text-center">
+                    <div class="col-6">
+                        <h4>{{ stats.total_submissions }}</h4>
+                        <small class="text-muted">Total Submissions</small>
+                    </div>
+                    <div class="col-6">
+                        <h4>{{ stats.approved_submissions }}</h4>
+                        <small class="text-muted">Approved</small>
+                    </div>
+                </div>
+                {% if stats.pending_submissions > 0 %}
+                <p class="text-center mt-2 mb-0">
+                    <small class="text-warning">{{ stats.pending_submissions }} pending review</small>
+                </p>
+                {% endif %}
+                <div class="mt-3">
+                    <a href="{% url 'leaderboard' %}" class="btn btn-sm btn-primary w-100">View Leaderboard</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
                 <h5>About SFLF</h5>
             </div>
             <div class="card-body">
                 <p class="small">The Standard FOIA Log Format (SFLF) standardizes disparate FOIA logs from government agencies for easier analysis.</p>
-                <p class="small"><strong>Standard Columns:</strong></p>
-                <ul class="small">
-                    <li>Request ID</li>
-                    <li>Requester</li>
-                    <li>Subject</li>
-                    <li>Dates (requested, perfected, completed)</li>
-                    <li>Status</li>
-                    <li>Exemptions</li>
-                    <li>Fees</li>
-                </ul>
+                <p class="small mb-0"><strong>How it works:</strong></p>
+                <ol class="small">
+                    <li>Upload your FOIA log file</li>
+                    <li>Review AI-suggested mappings</li>
+                    <li>Submit for community approval</li>
+                    <li>Download standardized files</li>
+                </ol>
             </div>
         </div>
     </div>
@@ -136,6 +167,29 @@ document.addEventListener('DOMContentLoaded', function() {
     const uploadArea = document.getElementById('upload-area');
     const progressArea = document.getElementById('upload-progress');
     const progressBar = progressArea.querySelector('.progress-bar');
+    
+    // Load saved email from localStorage
+    const emailField = document.getElementById('{{ form.submitter_email.id_for_label }}');
+    const usernameField = document.getElementById('{{ form.submitter_username.id_for_label }}');
+    
+    if (emailField && localStorage.getItem('submitter_email')) {
+        emailField.value = localStorage.getItem('submitter_email');
+    }
+    if (usernameField && localStorage.getItem('submitter_username')) {
+        usernameField.value = localStorage.getItem('submitter_username');
+    }
+    
+    // Save email/username when changed
+    if (emailField) {
+        emailField.addEventListener('change', function() {
+            localStorage.setItem('submitter_email', this.value);
+        });
+    }
+    if (usernameField) {
+        usernameField.addEventListener('change', function() {
+            localStorage.setItem('submitter_username', this.value);
+        });
+    }
     
     // Initialize Dropzone
     const dropzone = new Dropzone(uploadArea, {

@@ -4,16 +4,38 @@ import os
 
 
 class FOIAUpload(models.Model):
+    SUBMISSION_STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
     file = models.FileField(upload_to='uploads/')
     uploaded_at = models.DateTimeField(auto_now_add=True)
     uploaded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
+    
+    # Submitter attribution fields
+    submitter_username = models.CharField(max_length=100, blank=True, help_text="Optional username for attribution")
+    submitter_email = models.EmailField(blank=True, help_text="Optional email (kept private)")
+    
+    # Submission queue fields
+    submission_status = models.CharField(
+        max_length=20,
+        choices=SUBMISSION_STATUS_CHOICES,
+        default='pending'
+    )
+    reviewed_by = models.ForeignKey(
+        User, 
+        null=True, 
+        blank=True, 
+        on_delete=models.SET_NULL,
+        related_name='reviewed_uploads'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    
     processed = models.BooleanField(default=False)
     output_file = models.FileField(upload_to='outputs/', null=True, blank=True)
-    processing_mode = models.CharField(
-        max_length=20,
-        choices=[('manual', 'Manual'), ('ai_assist', 'AI Assist')],
-        default='manual'
-    )
     
     # SFLF Uploader metadata fields
     source = models.TextField(blank=True, help_text="Where the FOIA log was obtained (URL or description)")
@@ -95,3 +117,19 @@ class StatusMapping(models.Model):
     
     def __str__(self):
         return f"{self.original_status} -> {self.mapped_status}"
+
+
+class ContributorStats(models.Model):
+    """Track contributor statistics for the leaderboard"""
+    username = models.CharField(max_length=100, unique=True)
+    email = models.EmailField(blank=True)  # Private, for internal tracking
+    submissions_count = models.IntegerField(default=0)
+    approved_count = models.IntegerField(default=0)
+    rejected_count = models.IntegerField(default=0)
+    last_submission = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-approved_count', '-submissions_count']
+    
+    def __str__(self):
+        return f"{self.username} - {self.approved_count} approved"

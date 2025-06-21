@@ -1,13 +1,31 @@
 from django.contrib import admin
-from .models import FOIAUpload, ColumnSynonym, StatusSynonym, ProcessingLog, ColumnMapping, StatusMapping
+from .models import FOIAUpload, ColumnSynonym, StatusSynonym, ProcessingLog, ColumnMapping, StatusMapping, ContributorStats
 
 
 @admin.register(FOIAUpload)
 class FOIAUploadAdmin(admin.ModelAdmin):
-    list_display = ['filename', 'uploaded_at', 'uploaded_by', 'processed', 'processing_mode']
-    list_filter = ['processed', 'processing_mode', 'uploaded_at']
-    search_fields = ['file']
-    readonly_fields = ['uploaded_at']
+    list_display = ['filename', 'uploaded_at', 'submission_status', 'submitter_username', 'uploaded_by', 'processed']
+    list_filter = ['submission_status', 'processed', 'uploaded_at']
+    search_fields = ['file', 'submitter_username', 'submitter_email', 'agency']
+    readonly_fields = ['uploaded_at', 'reviewed_at']
+    
+    fieldsets = (
+        ('Upload Information', {
+            'fields': ('file', 'uploaded_at', 'uploaded_by')
+        }),
+        ('Submitter Attribution', {
+            'fields': ('submitter_username', 'submitter_email')
+        }),
+        ('Submission Status', {
+            'fields': ('submission_status', 'reviewed_by', 'reviewed_at', 'rejection_reason')
+        }),
+        ('FOIA Log Metadata', {
+            'fields': ('source', 'agency', 'time_period_start', 'time_period_end')
+        }),
+        ('Processing', {
+            'fields': ('processed', 'output_file')
+        })
+    )
     
     def filename(self, obj):
         return obj.filename
@@ -54,3 +72,12 @@ class StatusMappingAdmin(admin.ModelAdmin):
     list_display = ['upload', 'original_status', 'mapped_status', 'confidence', 'user_confirmed']
     list_filter = ['mapped_status', 'user_confirmed']
     search_fields = ['original_status', 'mapped_status', 'upload__file']
+
+
+@admin.register(ContributorStats)
+class ContributorStatsAdmin(admin.ModelAdmin):
+    list_display = ['username', 'submissions_count', 'approved_count', 'rejected_count', 'last_submission']
+    list_filter = ['last_submission']
+    search_fields = ['username', 'email']
+    ordering = ['-approved_count', '-submissions_count']
+    readonly_fields = ['submissions_count', 'approved_count', 'rejected_count', 'last_submission']

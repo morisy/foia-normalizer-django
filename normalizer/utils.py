@@ -2,8 +2,8 @@ import pandas as pd
 import os
 from django.conf import settings
 from .models import ColumnSynonym, StatusSynonym, ProcessingLog, ColumnMapping, StatusMapping
-from openai import OpenAI
-import json
+import difflib
+import re
 
 
 class SynonymLoader:
@@ -41,7 +41,6 @@ class SynonymLoader:
 class FOIANormalizer:
     def __init__(self, upload_instance):
         self.upload = upload_instance
-        self.client = OpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
         self.sflf_columns = [
             'request id', 'requester', 'requester organization', 'subject',
             'date requested', 'date perfected', 'date completed', 'status',
@@ -62,70 +61,52 @@ class FOIANormalizer:
         )
     
     def clean_problematic_rows(self, df):
-        """Use AI to identify and remove problematic header/blank rows"""
-        if not self.client or len(df) < 5:
-            if not self.client:
-                self.log_message('info', 'Skipping AI row cleaning - no OpenAI API key configured')
+        """Use statistical methods to identify and remove problematic header/blank rows"""
+        if len(df) < 5:
             return df
         
         try:
-            # Get first 10 rows for analysis
+            # Analyze first 10 rows for patterns
             sample_rows = df.head(10).copy()
+            rows_to_skip = 0
             
-            # Convert to string representation for AI analysis
-            sample_text = ""
-            for i, row in sample_rows.iterrows():
-                row_data = [str(val) if pd.notna(val) else "EMPTY" for val in row]
-                sample_text += f"Row {i}: {' | '.join(row_data)}\n"
+            for i in range(min(10, len(sample_rows))):
+                row = sample_rows.iloc[i]
+                
+                # Check if row is mostly empty
+                non_empty_count = row.notna().sum()
+                if non_empty_count <= 1:
+                    rows_to_skip = i + 1
+                    continue
+                
+                # Check if row contains metadata patterns
+                row_text = ' '.join(str(val) for val in row if pd.notna(val)).lower()
+                metadata_patterns = ['generated on', 'report', 'page', 'total', 'summary', 
+                                   'header', 'title', 'department', 'agency name']
+                
+                if any(pattern in row_text for pattern in metadata_patterns):
+                    rows_to_skip = i + 1
+                    continue
+                
+                # Check if row appears to be actual data (has dates, IDs, etc)
+                has_date = bool(re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', row_text))
+                has_id = bool(re.search(r'\b\d{4,}\b', row_text))  # 4+ digit numbers
+                has_request_terms = any(term in row_text for term in ['request', 'foia', 'record'])
+                
+                if has_date or has_id or has_request_terms:
+                    # This looks like real data, stop skipping
+                    break
             
-            # Limit sample text length to avoid token limits
-            if len(sample_text) > 3000:
-                sample_text = sample_text[:3000] + "..."
-            
-            prompt = f"""
-            Analyze this FOIA log data and determine if any of the first rows should be removed.
-            Look for:
-            1. Header rows that aren't actual data
-            2. Blank/empty rows  
-            3. Summary rows or metadata
-            4. Rows that don't contain actual FOIA request data
-            
-            Data sample:
-            {sample_text}
-            
-            Return only a number indicating how many rows to skip from the top (0-9).
-            If the data looks clean, return 0.
-            Only return the number, nothing else.
-            """
-            
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-                temperature=0
-            )
-            
-            response_text = response.choices[0].message.content.strip()
-            
-            # Try to extract a number from the response
-            import re
-            numbers = re.findall(r'\d+', response_text)
-            if numbers:
-                rows_to_skip = int(numbers[0])
-            else:
-                self.log_message('warning', f'AI returned non-numeric response: {response_text}')
-                return df
-            
-            if 0 <= rows_to_skip <= 9 and rows_to_skip > 0:
+            if rows_to_skip > 0:
                 df_cleaned = df.iloc[rows_to_skip:].reset_index(drop=True)
-                self.log_message('openai', f'AI suggested removing {rows_to_skip} problematic rows from top')
+                self.log_message('info', f'Removed {rows_to_skip} problematic rows from top using statistical analysis')
                 return df_cleaned
             else:
-                self.log_message('openai', 'AI determined no rows need to be removed')
+                self.log_message('info', 'No problematic rows detected')
                 return df
                 
         except Exception as e:
-            self.log_message('error', f"AI row cleaning failed: {str(e)}. Continuing without row cleaning.")
+            self.log_message('error', f"Row cleaning failed: {str(e)}. Continuing without row cleaning.")
             return df
 
     def load_file(self):
@@ -141,14 +122,14 @@ class FOIANormalizer:
                 df = pd.read_excel(file_path)
                 
                 # If we get unnamed columns, try reading with header in different rows
-                if any(col.startswith('Unnamed:') for col in df.columns):
+                if any(str(col).startswith('Unnamed:') for col in df.columns):
                     self.log_message('warning', 'Detected missing headers, trying different header rows')
                     
                     # Try reading with header in row 1, 2, or 3
                     for header_row in [1, 2, 3]:
                         try:
                             test_df = pd.read_excel(file_path, header=header_row)
-                            if not any(col.startswith('Unnamed:') for col in test_df.columns if pd.notna(col)):
+                            if not any(str(col).startswith('Unnamed:') for col in test_df.columns if pd.notna(col)):
                                 df = test_df
                                 self.log_message('info', f'Found headers in row {header_row}')
                                 break
@@ -156,7 +137,7 @@ class FOIANormalizer:
                             continue
                     
                     # If still no good headers, try to infer from first few rows
-                    if any(col.startswith('Unnamed:') for col in df.columns):
+                    if any(str(col).startswith('Unnamed:') for col in df.columns):
                         # Check if first row has meaningful text that could be headers
                         first_row = df.iloc[0]
                         if all(isinstance(val, str) or pd.isna(val) for val in first_row):
@@ -239,7 +220,7 @@ class FOIANormalizer:
             df.columns = [str(col).strip() if pd.notna(col) else f'Column_{i+1}' 
                          for i, col in enumerate(df.columns)]
             
-            # Use AI to clean problematic rows if available
+            # Clean problematic rows using statistical methods
             df = self.clean_problematic_rows(df)
             
             self.log_message('info', f"Loaded file with {len(df)} rows and {len(df.columns)} columns")
@@ -255,7 +236,9 @@ class FOIANormalizer:
         column_mappings = {}
         
         for col in df.columns:
-            col_lower = col.lower().strip()
+            # Convert to string to handle integer column names
+            col_str = str(col)
+            col_lower = col_str.lower().strip()
             
             # First try synonym lookup
             synonym = ColumnSynonym.objects.filter(synonym__iexact=col_lower).first()
@@ -264,10 +247,10 @@ class FOIANormalizer:
                 confidence = 1.0
                 self.log_message('info', f"Column '{col}' mapped to '{mapped_col}' via synonym")
             else:
-                # Try AI mapping if available
-                mapped_col, confidence = self._ai_map_column(col)
+                # Try fuzzy matching
+                mapped_col, confidence = self._fuzzy_map_column(col)
                 if not mapped_col:
-                    mapped_col = col  # Keep original if no mapping found
+                    mapped_col = col_str  # Keep original if no mapping found
                     confidence = 0.0
                     self.log_message('warning', f"No mapping found for column '{col}'")
             
@@ -305,8 +288,8 @@ class FOIANormalizer:
                 confidence = 1.0
                 self.log_message('info', f"Status '{status}' mapped to '{mapped_status}' via synonym")
             else:
-                # Try AI mapping if available
-                mapped_status, confidence = self._ai_map_status(status_str)
+                # Try fuzzy matching
+                mapped_status, confidence = self._fuzzy_map_status(status_str)
                 if not mapped_status:
                     mapped_status = status_str  # Keep original if no mapping found
                     confidence = 0.0
@@ -327,122 +310,194 @@ class FOIANormalizer:
         
         return status_mappings
     
-    def _ai_map_column(self, column_name):
-        """Use OpenAI to map column name"""
-        if not self.client:
-            return None, 0.0
+    def _fuzzy_map_column(self, column_name):
+        """Use fuzzy matching to map column name"""
+        # Convert to string if it's not already (handles integer column names)
+        column_str = str(column_name)
+        column_lower = column_str.lower().strip()
         
-        try:
-            prompt = f"""
-            Map the following column name to one of the Standard FOIA Log Format columns.
-            
-            Column name: "{column_name}"
-            
-            Standard SFLF columns:
-            {', '.join(self.sflf_columns)}
-            
-            If the column doesn't match any standard column, return "unmapped".
-            Return only the exact column name from the list above, or "unmapped".
-            """
-            
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0
-            )
-            
-            result = response.choices[0].message.content.strip()
-            confidence = 0.8  # AI mapping confidence
-            
-            if result == "unmapped" or result not in self.sflf_columns:
-                return None, 0.0
-            
-            self.log_message('openai', f"AI mapped column '{column_name}' to '{result}'")
-            return result, confidence
+        # Direct keyword matching with confidence scores
+        keyword_mappings = {
+            'request id': ['id', 'number', 'tracking', 'control', 'case', 'ref'],
+            'requester': ['name', 'requester', 'requestor', 'from', 'who'],
+            'requester organization': ['org', 'company', 'affiliation', 'entity'],
+            'subject': ['subject', 'description', 'request', 'topic', 'about'],
+            'date requested': ['requested', 'received', 'submitted', 'date_req'],
+            'date perfected': ['perfected', 'complete', 'perfection'],
+            'date completed': ['completed', 'closed', 'resolved', 'finished'],
+            'status': ['status', 'state', 'disposition', 'outcome'],
+            'exemptions cited': ['exemption', 'withhold', 'redact', 'b('],
+            'fee category': ['fee_cat', 'category', 'fee_type'],
+            'fee waiver': ['waiver', 'fee_waiv', 'discount'],
+            'fees charged': ['fee', 'cost', 'charge', 'amount', 'paid'],
+            'processed under privacy act': ['privacy', 'privacy_act']
+        }
         
-        except Exception as e:
-            self.log_message('error', f"AI column mapping failed: {str(e)}")
-            return None, 0.0
+        # First try exact keyword matching
+        for sflf_col, keywords in keyword_mappings.items():
+            for keyword in keywords:
+                if keyword in column_lower:
+                    confidence = 0.9 if keyword == column_lower else 0.7
+                    self.log_message('info', f"Fuzzy matched column '{column_name}' to '{sflf_col}' (confidence: {confidence})")
+                    return sflf_col, confidence
+        
+        # Try fuzzy string matching
+        best_match = None
+        best_ratio = 0
+        
+        for sflf_col in self.sflf_columns:
+            ratio = difflib.SequenceMatcher(None, column_lower, sflf_col.lower()).ratio()
+            if ratio > best_ratio and ratio > 0.6:  # 60% similarity threshold
+                best_match = sflf_col
+                best_ratio = ratio
+        
+        if best_match:
+            confidence = best_ratio * 0.8  # Scale down confidence for fuzzy matches
+            self.log_message('info', f"Fuzzy matched column '{column_name}' to '{best_match}' (confidence: {confidence:.2f})")
+            return best_match, confidence
+        
+        return None, 0.0
     
-    def _ai_map_status(self, status_value):
-        """Use OpenAI to map status value"""
-        if not self.client:
-            return None, 0.0
+    def _fuzzy_map_status(self, status_value):
+        """Use fuzzy matching to map status value"""
+        # Convert to string if it's not already
+        status_str = str(status_value)
+        status_lower = status_str.lower().strip()
         
-        try:
-            prompt = f"""
-            Map the following status value to one of the Standard FOIA Log Format statuses.
-            
-            Status value: "{status_value}"
-            
-            Standard SFLF statuses:
-            {', '.join([s for s in self.sflf_statuses if s])} (or empty)
-            
-            If the status doesn't match any standard status, return "unmapped".
-            Return only the exact status from the list above, or "unmapped".
-            """
-            
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0
-            )
-            
-            result = response.choices[0].message.content.strip()
-            confidence = 0.8  # AI mapping confidence
-            
-            if result == "unmapped" or result not in self.sflf_statuses:
-                return None, 0.0
-            
-            self.log_message('openai', f"AI mapped status '{status_value}' to '{result}'")
-            return result, confidence
+        # Direct keyword mapping
+        status_mappings = {
+            'processed': ['processing', 'in process', 'pending', 'open', 'active'],
+            'appealing': ['appeal', 'appealed', 'under appeal'],
+            'fix': ['fix', 'clarification', 'need info', 'incomplete'],
+            'payment': ['payment', 'fee', 'invoice', 'billing'],
+            'lawsuit': ['lawsuit', 'litigation', 'court', 'legal'],
+            'rejected': ['rejected', 'denied', 'reject', 'denial'],
+            'no_docs': ['no docs', 'no records', 'no responsive', 'nothing found'],
+            'done': ['done', 'complete', 'closed', 'fulfilled'],
+            'partial': ['partial', 'partially', 'some records'],
+            'abandoned': ['abandoned', 'withdrawn', 'cancelled', 'closed by requester']
+        }
         
-        except Exception as e:
-            self.log_message('error', f"AI status mapping failed: {str(e)}")
-            return None, 0.0
+        # First try exact keyword matching
+        for sflf_status, keywords in status_mappings.items():
+            for keyword in keywords:
+                if keyword in status_lower or status_lower in keyword:
+                    confidence = 0.9 if keyword == status_lower else 0.7
+                    self.log_message('info', f"Fuzzy matched status '{status_value}' to '{sflf_status}' (confidence: {confidence})")
+                    return sflf_status, confidence
+        
+        # Try fuzzy string matching
+        best_match = None
+        best_ratio = 0
+        
+        for sflf_status in self.sflf_statuses:
+            if not sflf_status:  # Skip empty status
+                continue
+            ratio = difflib.SequenceMatcher(None, status_lower, sflf_status.lower()).ratio()
+            if ratio > best_ratio and ratio > 0.6:  # 60% similarity threshold
+                best_match = sflf_status
+                best_ratio = ratio
+        
+        if best_match:
+            confidence = best_ratio * 0.8  # Scale down confidence for fuzzy matches
+            self.log_message('info', f"Fuzzy matched status '{status_value}' to '{best_match}' (confidence: {confidence:.2f})")
+            return best_match, confidence
+        
+        return None, 0.0
     
     def normalize_dataframe(self, df, column_mappings, status_mappings):
         """Apply mappings to create normalized DataFrame"""
         # Create a new dataframe with only SFLF columns that have data
         df_normalized = pd.DataFrame()
         
+        # Handle multiple status columns separately
+        status_columns = []
+        for orig_col, mapped_col in column_mappings.items():
+            if mapped_col == 'status' and orig_col in df.columns:
+                status_columns.append(orig_col)
+        
         # Map each SFLF column from the original data
         for sflf_col in self.sflf_columns:
-            # Find which original column maps to this SFLF column
-            source_col = None
-            for orig_col, mapped_col in column_mappings.items():
-                if mapped_col == sflf_col:
-                    source_col = orig_col
-                    break
-            
-            if source_col and source_col in df.columns:
-                # Check if the source column has any meaningful data
-                source_data = df[source_col]
-                non_empty_count = source_data.count()  # Counts non-null values
-                non_whitespace_count = sum(1 for val in source_data if pd.notna(val) and str(val).strip())
+            if sflf_col == 'status' and status_columns:
+                # Handle multiple status columns with priority
+                self._handle_multiple_status_columns(df, df_normalized, status_columns, status_mappings)
+            else:
+                # Find which original column maps to this SFLF column
+                source_col = None
+                for orig_col, mapped_col in column_mappings.items():
+                    if mapped_col == sflf_col:
+                        source_col = orig_col
+                        break
                 
-                # Only include column if it has meaningful data
-                if non_empty_count > 0 and non_whitespace_count > 0:
-                    # Copy data from source column
-                    df_normalized[sflf_col] = df[source_col]
+                if source_col and source_col in df.columns:
+                    # Check if the source column has any meaningful data
+                    source_data = df[source_col]
+                    non_empty_count = source_data.count()  # Counts non-null values
+                    non_whitespace_count = sum(1 for val in source_data if pd.notna(val) and str(val).strip())
                     
-                    # Apply status mappings if this is the status column
-                    if sflf_col == 'status':
-                        df_normalized[sflf_col] = df_normalized[sflf_col].map(
-                            lambda x: status_mappings.get(x, x) if pd.notna(x) else x
-                        )
-                    
-                    self.log_message('info', f'Included column "{sflf_col}" with {non_whitespace_count} data values')
-                else:
-                    self.log_message('info', f'Skipped empty column "{sflf_col}" (mapped from "{source_col}")')
-            # Note: We no longer create empty columns for unmapped SFLF columns
+                    # Only include column if it has meaningful data
+                    if non_empty_count > 0 and non_whitespace_count > 0:
+                        # Copy data from source column
+                        df_normalized[sflf_col] = df[source_col]
+                        
+                        self.log_message('info', f'Included column "{sflf_col}" with {non_whitespace_count} data values')
+                    else:
+                        self.log_message('info', f'Skipped empty column "{sflf_col}" (mapped from "{source_col}")')
+                # Note: We no longer create empty columns for unmapped SFLF columns
         
         # Add metadata fields from upload instance
         self._add_metadata_columns(df_normalized)
         
         return df_normalized
+    
+    def _handle_multiple_status_columns(self, df, df_normalized, status_columns, status_mappings):
+        """Handle multiple status columns with priority order"""
+        # Get priority order from metadata
+        priority_order = []
+        if self.upload.metadata and 'status_column_priority' in self.upload.metadata:
+            priority_order = self.upload.metadata['status_column_priority']
+            self.log_message('info', f'Using status column priority order: {priority_order}')
+        
+        # Sort status columns by priority
+        if priority_order:
+            status_columns = sorted(status_columns, 
+                                  key=lambda x: priority_order.index(x) if x in priority_order else len(priority_order))
+        
+        self.log_message('info', f'Processing {len(status_columns)} status columns: {status_columns}')
+        
+        # Create status column by taking first non-empty value from priority-ordered columns
+        status_values = []
+        status_source_tracking = []  # Track which column each status came from
+        
+        for idx, row in df.iterrows():
+            final_status = ''
+            source_column = ''
+            
+            # Check each status column in priority order
+            for col in status_columns:
+                if col in row and pd.notna(row[col]) and str(row[col]).strip():
+                    original_status = str(row[col])
+                    
+                    # Apply status mapping
+                    mapped_status = status_mappings.get(original_status, original_status)
+                    
+                    final_status = mapped_status
+                    source_column = col
+                    break  # Use first non-empty status found
+            
+            status_values.append(final_status)
+            status_source_tracking.append(source_column)
+        
+        # Add the combined status column
+        df_normalized['status'] = status_values
+        
+        # Log statistics about status resolution
+        source_counts = pd.Series(status_source_tracking).value_counts()
+        self.log_message('info', f'Status values resolved from columns: {source_counts.to_dict()}')
+        
+        # Count non-empty statuses
+        non_empty_count = sum(1 for s in status_values if s)
+        self.log_message('info', f'Included combined status column with {non_empty_count} non-empty values')
     
     def _add_metadata_columns(self, df_normalized):
         """Add SFLF metadata columns from upload instance"""
@@ -472,7 +527,8 @@ class FOIANormalizer:
                 'mapped_columns': len([m for m in column_mappings.values() if m != m.lower().replace(' ', '_')]),
                 'empty_rows': df.isnull().all(axis=1).sum(),
                 'will_include_columns': 0,
-                'will_skip_columns': 0
+                'will_skip_columns': 0,
+                'unmapped_columns': len([m for m in column_mappings.values() if m == column_mappings.get(m, m)])
             }
         }
         

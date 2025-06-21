@@ -2,10 +2,13 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.urls import reverse
-from .models import FOIAUpload, ColumnMapping, StatusMapping, ProcessingLog
-from .forms import FileUploadForm
+from django.utils import timezone
+from django.db.models import Q, Count, F
+from .models import FOIAUpload, ColumnMapping, StatusMapping, ProcessingLog, ContributorStats
+from .forms import FileUploadForm, ApprovalForm
 from .utils import FOIANormalizer
 import json
 import os
@@ -14,54 +17,53 @@ import os
 def home(request):
     """Home page with upload interface"""
     form = FileUploadForm()
-    recent_uploads = FOIAUpload.objects.order_by('-uploaded_at')[:10]
+    recent_uploads = FOIAUpload.objects.filter(
+        submission_status='approved'
+    ).order_by('-uploaded_at')[:10]
+    
+    # Get stats for display
+    stats = {
+        'total_submissions': FOIAUpload.objects.count(),
+        'approved_submissions': FOIAUpload.objects.filter(submission_status='approved').count(),
+        'pending_submissions': FOIAUpload.objects.filter(submission_status='pending').count(),
+        'top_contributors': ContributorStats.objects.filter(approved_count__gt=0)[:5]
+    }
+    
     return render(request, 'normalizer/home.html', {
         'form': form,
-        'recent_uploads': recent_uploads
+        'recent_uploads': recent_uploads,
+        'stats': stats
     })
 
 
 def upload_file(request):
-    """Handle file upload via AJAX"""
+    """Handle file upload via AJAX - always goes to AI-assisted manual review"""
     if request.method == 'POST':
         form = FileUploadForm(request.POST, request.FILES)
         if form.is_valid():
             upload = form.save(commit=False)
             if request.user.is_authenticated:
                 upload.uploaded_by = request.user
-            upload.processing_mode = request.POST.get('mode', 'manual')
             upload.save()
             
-            # For AI Assist mode, process immediately
-            if upload.processing_mode == 'ai_assist':
-                try:
-                    process_upload(upload)
-                    # Refresh the upload object to ensure it's up to date
-                    upload.refresh_from_db()
-                    return JsonResponse({
-                        'success': True,
-                        'upload_id': upload.id,
-                        'redirect_url': reverse('file_detail', args=[upload.id])
-                    })
-                except Exception as e:
-                    # Log the error for debugging
-                    from .models import ProcessingLog
-                    ProcessingLog.objects.create(
-                        upload=upload,
-                        log_type='error',
-                        message=f'AI Assist processing failed: {str(e)}'
-                    )
-                    return JsonResponse({
-                        'success': False,
-                        'error': f'Processing failed: {str(e)}'
-                    })
-            else:
-                # Manual mode - redirect to review page
-                return JsonResponse({
-                    'success': True,
-                    'upload_id': upload.id,
-                    'redirect_url': reverse('manual_review', args=[upload.id])
-                })
+            # Update contributor stats if username provided
+            if upload.submitter_username:
+                contributor, created = ContributorStats.objects.get_or_create(
+                    username=upload.submitter_username,
+                    defaults={'email': upload.submitter_email}
+                )
+                contributor.submissions_count = F('submissions_count') + 1
+                contributor.last_submission = timezone.now()
+                if upload.submitter_email and not contributor.email:
+                    contributor.email = upload.submitter_email
+                contributor.save()
+            
+            # Always redirect to AI-assisted manual review
+            return JsonResponse({
+                'success': True,
+                'upload_id': upload.id,
+                'redirect_url': reverse('manual_review', args=[upload.id])
+            })
         
         return JsonResponse({
             'success': False,
@@ -72,12 +74,53 @@ def upload_file(request):
 
 
 def manual_review(request, upload_id):
-    """Manual review interface for column and status mappings"""
+    """AI-assisted manual review interface for column and status mappings"""
     upload = get_object_or_404(FOIAUpload, id=upload_id)
     
     if request.method == 'POST':
-        # Process the manual mappings
+        # Process the manual mappings and submit for approval
         try:
+            # Handle manual status column selection (now supports multiple columns)
+            manual_status_columns = request.POST.getlist('manual_status_columns')
+            status_column_priority = request.POST.getlist('status_column_priority')
+            
+            # Use priority order if provided, otherwise use selection order
+            if status_column_priority:
+                manual_status_columns = status_column_priority
+            
+            if manual_status_columns:
+                # Store the priority order in upload metadata
+                upload.metadata = upload.metadata or {}
+                upload.metadata['status_column_priority'] = manual_status_columns
+                upload.save()
+                
+                # Update column mappings for all selected status columns
+                for col in manual_status_columns:
+                    mapping, created = ColumnMapping.objects.update_or_create(
+                        upload=upload,
+                        original_column=col,
+                        defaults={
+                            'mapped_column': 'status',
+                            'confidence': 1.0,
+                            'user_confirmed': True
+                        }
+                    )
+                
+                # Process status mappings from all selected columns
+                normalizer = FOIANormalizer(upload)
+                df = normalizer.load_file()
+                
+                # Collect unique status values from all columns
+                all_status_values = set()
+                for col in manual_status_columns:
+                    if col in df.columns:
+                        unique_values = df[col].dropna().unique()
+                        all_status_values.update(unique_values)
+                
+                # Map all unique status values
+                for status_val in all_status_values:
+                    normalizer._fuzzy_map_status(status_val)
+            
             # Update column mappings based on form data
             for key, value in request.POST.items():
                 if key.startswith('column_'):
@@ -101,16 +144,32 @@ def manual_review(request, upload_id):
                         mapping.mapped_status = value
                         mapping.user_confirmed = True
                         mapping.save()
+                
+                elif key.startswith('dynamic_status_'):
+                    # Handle dynamic status mappings from manual selection
+                    original_status = key.replace('dynamic_status_', '').replace('_', ' ')
+                    mapping, created = StatusMapping.objects.update_or_create(
+                        upload=upload,
+                        original_status=original_status,
+                        defaults={
+                            'mapped_status': value,
+                            'confidence': 1.0,
+                            'user_confirmed': True
+                        }
+                    )
             
-            # Process the file with confirmed mappings
+            # Process the file and set to pending approval
             process_upload(upload)
-            messages.success(request, 'File processed successfully!')
-            return redirect('file_detail', upload_id=upload.id)
+            upload.submission_status = 'pending'
+            upload.save()
+            
+            messages.success(request, 'Your submission has been processed and submitted for approval!')
+            return redirect('submission_status', upload_id=upload.id)
         
         except Exception as e:
             messages.error(request, f'Error processing file: {str(e)}')
     
-    # Initial processing to get mappings and preview data
+    # Initial AI-assisted processing to get mappings and preview data
     preview_data = None
     if not upload.column_mappings.exists():
         try:
@@ -145,6 +204,25 @@ def manual_review(request, upload_id):
         except Exception as e:
             messages.warning(request, f'Could not generate preview: {str(e)}')
     
+    # Get all unique status values from potential status columns
+    potential_status_values = {}
+    try:
+        normalizer = FOIANormalizer(upload)
+        df = normalizer.load_file()
+        
+        # Look for columns that might contain status values
+        status_keywords = ['status', 'state', 'disposition', 'outcome', 'result']
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if any(keyword in col_lower for keyword in status_keywords):
+                # Get unique values from this column
+                unique_values = df[col].dropna().unique()
+                if len(unique_values) > 0 and len(unique_values) < 50:  # Reasonable number of statuses
+                    potential_status_values[col] = list(unique_values)
+    except Exception as e:
+        # Continue without status value detection
+        pass
+    
     column_mappings = upload.column_mappings.all()
     status_mappings = upload.status_mappings.all()
     
@@ -168,12 +246,150 @@ def manual_review(request, upload_id):
         'sflf_columns': sflf_columns,
         'sflf_statuses': sflf_statuses,
         'preview_data': preview_data,
+        'potential_status_values': potential_status_values,
+    })
+
+
+@login_required
+def submission_queue(request):
+    """Queue of pending submissions for authenticated users to review"""
+    if not request.user.is_authenticated:
+        messages.error(request, 'You must be logged in to access the submission queue.')
+        return redirect('home')
+    
+    pending_uploads = FOIAUpload.objects.filter(
+        submission_status='pending'
+    ).order_by('-uploaded_at')
+    
+    # Pagination
+    paginator = Paginator(pending_uploads, 10)
+    page_number = request.GET.get('page')
+    page_uploads = paginator.get_page(page_number)
+    
+    return render(request, 'normalizer/submission_queue.html', {
+        'uploads': page_uploads,
+    })
+
+
+@login_required
+def approve_submission(request, upload_id):
+    """Approve or reject a submission"""
+    if not request.user.is_authenticated:
+        messages.error(request, 'You must be logged in to approve submissions.')
+        return redirect('home')
+    
+    upload = get_object_or_404(FOIAUpload, id=upload_id, submission_status='pending')
+    
+    if request.method == 'POST':
+        form = ApprovalForm(request.POST)
+        if form.is_valid():
+            action = form.cleaned_data['action']
+            rejection_reason = form.cleaned_data.get('rejection_reason', '')
+            
+            upload.reviewed_by = request.user
+            upload.reviewed_at = timezone.now()
+            
+            if action == 'approve':
+                upload.submission_status = 'approved'
+                messages.success(request, 'Submission approved successfully!')
+                
+                # Update contributor stats
+                if upload.submitter_username:
+                    contributor, created = ContributorStats.objects.get_or_create(
+                        username=upload.submitter_username,
+                        defaults={'email': upload.submitter_email}
+                    )
+                    contributor.approved_count = F('approved_count') + 1
+                    contributor.save()
+                    
+            else:  # reject
+                upload.submission_status = 'rejected'
+                upload.rejection_reason = rejection_reason
+                messages.info(request, 'Submission rejected.')
+                
+                # Update contributor stats
+                if upload.submitter_username:
+                    contributor, created = ContributorStats.objects.get_or_create(
+                        username=upload.submitter_username,
+                        defaults={'email': upload.submitter_email}
+                    )
+                    contributor.rejected_count = F('rejected_count') + 1
+                    contributor.save()
+            
+            upload.save()
+            return redirect('submission_queue')
+    else:
+        form = ApprovalForm()
+    
+    # Get file details and logs for review
+    logs = upload.logs.order_by('-timestamp')
+    column_mappings = upload.column_mappings.all()
+    status_mappings = upload.status_mappings.all()
+    
+    return render(request, 'normalizer/approve_submission.html', {
+        'upload': upload,
+        'form': form,
+        'logs': logs,
+        'column_mappings': column_mappings,
+        'status_mappings': status_mappings,
+    })
+
+
+def submission_status(request, upload_id):
+    """Show submission status to submitter"""
+    upload = get_object_or_404(FOIAUpload, id=upload_id)
+    
+    return render(request, 'normalizer/submission_status.html', {
+        'upload': upload,
+    })
+
+
+def leaderboard(request):
+    """Show leaderboard of top contributors"""
+    contributors = ContributorStats.objects.filter(
+        approved_count__gt=0
+    ).order_by('-approved_count', '-submissions_count')[:50]
+    
+    # Calculate pending counts for each contributor
+    contributor_data = []
+    for contributor in contributors:
+        # Get pending count for this contributor
+        pending_count = FOIAUpload.objects.filter(
+            submitter_username=contributor.username,
+            submission_status='pending'
+        ).count()
+        
+        # Calculate approval rate (approved / (approved + rejected))
+        total_decided = contributor.approved_count + contributor.rejected_count
+        if total_decided > 0:
+            approval_rate = (contributor.approved_count / total_decided) * 100
+        else:
+            approval_rate = 0
+        
+        contributor_data.append({
+            'username': contributor.username,
+            'submissions_count': contributor.submissions_count,
+            'approved_count': contributor.approved_count,
+            'rejected_count': contributor.rejected_count,
+            'pending_count': pending_count,
+            'approval_rate': approval_rate,
+            'last_submission': contributor.last_submission,
+        })
+    
+    return render(request, 'normalizer/leaderboard.html', {
+        'contributors': contributor_data,
     })
 
 
 def file_detail(request, upload_id):
     """Display file details and processing logs"""
     upload = get_object_or_404(FOIAUpload, id=upload_id)
+    
+    # Only show approved submissions or submissions by the current user
+    if upload.submission_status != 'approved' and upload.uploaded_by != request.user:
+        messages.error(request, 'File not found or not yet approved.')
+        return redirect('home')
+    
     logs = upload.logs.order_by('-timestamp')
     
     # Pagination for logs
@@ -188,8 +404,10 @@ def file_detail(request, upload_id):
 
 
 def file_list(request):
-    """List all uploaded files"""
-    uploads = FOIAUpload.objects.order_by('-uploaded_at')
+    """List all approved uploaded files"""
+    uploads = FOIAUpload.objects.filter(
+        submission_status='approved'
+    ).order_by('-uploaded_at')
     
     # Pagination
     paginator = Paginator(uploads, 20)
@@ -202,9 +420,13 @@ def file_list(request):
 
 
 def download_file(request, upload_id):
-    """Download processed file"""
+    """Download processed file (only approved submissions)"""
     try:
-        upload = get_object_or_404(FOIAUpload, id=upload_id)
+        upload = get_object_or_404(
+            FOIAUpload, 
+            id=upload_id, 
+            submission_status='approved'
+        )
         
         if not upload.processed or not upload.output_file:
             messages.error(request, 'File has not been processed yet.')
@@ -226,14 +448,14 @@ def download_file(request, upload_id):
 
 
 def process_upload(upload):
-    """Process an upload (used by both manual and AI assist modes)"""
+    """Process an upload using AI-assisted mappings"""
     from .models import ProcessingLog
     
     try:
         ProcessingLog.objects.create(
             upload=upload,
             log_type='info',
-            message=f'Starting processing in {upload.processing_mode} mode'
+            message='Starting AI-assisted processing'
         )
         
         normalizer = FOIANormalizer(upload)
@@ -246,7 +468,7 @@ def process_upload(upload):
             ProcessingLog.objects.create(
                 upload=upload,
                 log_type='info',
-                message='Generating column mappings...'
+                message='Generating AI-assisted column mappings...'
             )
             
             column_mappings = normalizer.map_columns(df)
@@ -299,6 +521,6 @@ def process_upload(upload):
         ProcessingLog.objects.create(
             upload=upload,
             log_type='error',
-            message=f'Processing failed at step: {str(e)}'
+            message=f'Processing failed: {str(e)}'
         )
         raise
